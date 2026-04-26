@@ -1,0 +1,193 @@
+# Rootwork — Master Cursor Rules
+# File: .cursor/rules/rootwork-base.mdc
+# Applies to: all files in this project, always active
+
+---
+
+## What This Project Is
+
+Rootwork is a community-centered data planning platform for nonprofits, built by Intentional Data. It guides organizations through five stages: Onboard, Listen, Collect, Analyze, and Connect. You are an AI pair-programmer working on this project alongside Dominique (they/them), the founder of Intentional Data.
+
+Read the project knowledge files before generating any code. The schema, capability map, tech stack doc, values framework, and product AI agents document are authoritative. Do not contradict them.
+
+---
+
+## Stack
+
+- **Frontend**: React (Vite), Tailwind CSS, React Router
+- **Backend**: Node.js, Express
+- **Database**: Supabase (PostgreSQL + RLS + Auth + Storage)
+- **AI**: Anthropic Claude API (`claude-sonnet-4-6`) — server-side only
+- **Auth**: Supabase Auth, magic link as default
+- **Version control**: GitHub
+
+---
+
+## Non-Negotiable Rules — Violating Any of These Is a Bug
+
+### 1. API Keys Are Server-Side Only
+The Claude API key and Supabase service role key live in the backend `.env` only.
+They are NEVER imported, referenced, or passed to any frontend file.
+The frontend uses only the Supabase anon key via the public Supabase client.
+
+```js
+// ✅ CORRECT — in backend route file
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+// ❌ WRONG — never in any frontend file
+const anthropic = new Anthropic({ apiKey: process.env.VITE_ANTHROPIC_KEY });
+```
+
+### 2. Gate Logic Is Middleware, Not UI
+Stage gates are enforced in Express middleware on every relevant route.
+They cannot be bypassed by client-side state, URL manipulation, or UI logic.
+
+```js
+// ✅ CORRECT — middleware pattern for Hard Stop gate
+async function requireHardStop(req, res, next) {
+  const { orgId } = req.user;
+  const { data } = await supabase
+    .from('community_engagements')
+    .select('id')
+    .eq('org_id', orgId)
+    .not('who_was_present', 'is', null)
+    .not('who_was_absent', 'is', null)
+    .not('why_absent', 'is', null)
+    .limit(1);
+  if (!data || data.length === 0) {
+    return res.status(403).json({ error: 'HARD_STOP_INCOMPLETE' });
+  }
+  next();
+}
+```
+
+### 3. Community Voice Is Never Processed by Claude
+Community voice records are stored verbatim and surfaced verbatim.
+Claude agents never receive community voice text as input to summarize, reframe, or paraphrase.
+When community voice appears in Claude inputs (e.g., for the tension surfacing agent), it is passed as quoted source material with explicit instructions not to alter it.
+
+```js
+// ✅ CORRECT — community voice passed as protected source
+const systemPrompt = `
+You are surfacing tensions between three sources of input.
+The community voice section below is quoted verbatim from real community members.
+Do NOT paraphrase, summarize, or reframe any community voice content.
+Surface it exactly as written when referencing it.
+`;
+
+// ❌ WRONG — never pass community voice asking for a summary
+const prompt = `Summarize what community members said: ${communityVoiceRecords}`;
+```
+
+### 4. All Claude Outputs Are Labeled as Drafts
+Any component that displays Claude-generated content must include a visible draft label.
+This is a UI requirement, not optional styling.
+
+```jsx
+// ✅ CORRECT
+<div className="claude-output">
+  <span className="draft-label">AI draft — review and edit before use</span>
+  <p>{claudeOutput}</p>
+</div>
+
+// ❌ WRONG — displaying Claude output without label
+<p>{claudeOutput}</p>
+```
+
+### 5. Stage Progress Is Updated Server-Side Only
+The `stage_progress` table is never updated by direct client requests.
+Stage completion is set by server-side logic after validating that the required data exists.
+
+### 6. RLS Is On Every Table
+Every Supabase table has row-level security enabled.
+Never disable RLS or create a table without an RLS policy.
+Test RLS policies before marking any table task complete.
+
+### 7. Program Design Versions Are Never Overwritten
+When the org's program design changes, insert a new row with `version + 1`.
+Never update an existing `program_designs` row.
+
+---
+
+## Claude API Call Pattern (Server-Side)
+
+All Claude calls follow this pattern. Never deviate from it.
+
+```js
+import Anthropic from '@anthropic-ai/sdk';
+import { logClaudeInteraction } from '../utils/claudeLogger.js';
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+export async function callClaude({ orgId, userId, stage, interactionType, systemPrompt, userPrompt }) {
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 2000,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }]
+  });
+
+  const output = response.content[0].text;
+
+  // Log every interaction — required
+  await logClaudeInteraction({
+    orgId,
+    userId,
+    stage,
+    interactionType,
+    outputSummary: output.slice(0, 300), // Non-sensitive summary only
+    tokensUsed: response.usage.input_tokens + response.usage.output_tokens
+  });
+
+  return output;
+}
+```
+
+---
+
+## File Structure Convention
+
+```
+rootwork/
+├── frontend/
+│   ├── src/
+│   │   ├── components/       # Reusable UI components
+│   │   ├── pages/            # Route-level page components
+│   │   ├── hooks/            # Custom React hooks
+│   │   ├── lib/
+│   │   │   └── supabaseClient.js   # Anon key only
+│   │   └── utils/
+├── backend/
+│   ├── routes/               # Express route files, one per domain
+│   ├── middleware/            # Gate enforcement, auth, tier checks
+│   ├── agents/               # Claude agent functions, one per agent
+│   ├── utils/
+│   │   └── claudeLogger.js   # Interaction logging utility
+│   └── server.js
+├── .env                      # Never committed
+├── .env.example              # Always committed, no real values
+└── .gitignore
+```
+
+---
+
+## Naming Conventions
+
+- Route files: `stage01.routes.js`, `stage02.routes.js`
+- Agent files: `agent01_missionFraming.js`, `agent04_sowExtraction.js`
+- Middleware files: `hardStopGate.js`, `tierGate.js`, `authMiddleware.js`
+- Component files: PascalCase — `StakeholderMap.jsx`, `MissionFramingForm.jsx`
+- Supabase queries: always `async/await`, always handle errors explicitly
+
+---
+
+## What to Do When You're Unsure
+
+If a code decision touches any of the following, stop and ask before generating:
+- Gate logic (Hard Stop, tier enforcement, reconciliation)
+- Community voice data (how it's stored, retrieved, or displayed)
+- Claude API call structure or system prompts
+- RLS policies
+- Tier access control
+
+Do not guess on these. Ask.

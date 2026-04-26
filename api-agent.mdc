@@ -1,0 +1,283 @@
+# Rootwork — API + Claude Agent Rules
+# File: .cursor/rules/api-agent.mdc
+# Applies to: **/routes/*, **/agents/*, **/middleware/*, **/server.js
+
+---
+
+## Your Role
+
+You are the API and Claude Agent builder. You generate Express routes, middleware, and Claude agent functions. You know all 15 product agents, their inputs, outputs, and constraints. You enforce server-side API key usage, gate logic, and the community voice rules at the code layer.
+
+---
+
+## Express Route Structure
+
+Every route file follows this pattern:
+
+```js
+// routes/stage01.routes.js
+import express from 'express';
+import { authenticateUser } from '../middleware/auth.js';
+import { agent01_missionFraming } from '../agents/agent01_missionFraming.js';
+import { supabase } from '../lib/supabaseClient.js';
+
+const router = express.Router();
+
+// All routes require authentication
+router.use(authenticateUser);
+
+router.post('/mission-draft', async (req, res) => {
+  try {
+    const { orgId } = req.user; // Set by authenticateUser middleware
+
+    // Fetch org inputs
+    const { data: profile, error } = await supabase
+      .from('org_profiles')
+      .select('who_is_most_affected, definition_of_success, theory_of_change')
+      .eq('org_id', orgId)
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Call agent — server-side only
+    const result = await agent01_missionFraming({
+      orgId,
+      userId: req.user.userId,
+      inputs: profile
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+export default router;
+```
+
+---
+
+## Authentication Middleware
+
+```js
+// middleware/auth.js
+import { supabase } from '../lib/supabaseClient.js';
+
+export async function authenticateUser(req, res, next) {
+  const token = req.headers.authorization?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) return res.status(401).json({ error: 'Invalid session' });
+
+  // Get org membership
+  const { data: membership } = await supabase
+    .from('org_members')
+    .select('org_id, role')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!membership) return res.status(403).json({ error: 'No org membership found' });
+
+  req.user = { userId: user.id, orgId: membership.org_id, role: membership.role };
+  next();
+}
+```
+
+---
+
+## Gate Middleware
+
+```js
+// middleware/hardStopGate.js
+import { supabase } from '../lib/supabaseClient.js';
+
+export async function requireHardStop(req, res, next) {
+  const { orgId } = req.user;
+  const { data, error } = await supabase
+    .from('community_engagements')
+    .select('id')
+    .eq('org_id', orgId)
+    .not('who_was_present', 'is', null)
+    .not('who_was_absent', 'is', null)
+    .not('why_absent', 'is', null)
+    .limit(1);
+
+  if (error || !data || data.length === 0) {
+    return res.status(403).json({
+      error: 'HARD_STOP_INCOMPLETE',
+      message: 'Community engagement documentation is required before Stage 03 is available.'
+    });
+  }
+  next();
+}
+
+// middleware/tierGate.js
+import { supabase } from '../lib/supabaseClient.js';
+
+export function requireTier(...allowedTiers) {
+  return async (req, res, next) => {
+    const { orgId } = req.user;
+    const { data, error } = await supabase
+      .from('organizations')
+      .select('tier')
+      .eq('id', orgId)
+      .single();
+
+    if (error || !data) return res.status(400).json({ error: 'Org not found' });
+    if (!allowedTiers.includes(data.tier)) {
+      return res.status(403).json({
+        error: 'TIER_GATE',
+        message: `This feature requires: ${allowedTiers.join(' or ')} tier.`,
+        currentTier: data.tier
+      });
+    }
+    next();
+  };
+}
+
+// Usage in routes:
+// router.use(requireTier('growth', 'enterprise')); // Stage 04
+// router.use(requireTier('enterprise')); // Stage 05
+```
+
+---
+
+## Claude Agent Pattern (All 15 Agents)
+
+Every agent file follows this structure:
+
+```js
+// agents/agent01_missionFraming.js
+import Anthropic from '@anthropic-ai/sdk';
+import { logClaudeInteraction } from '../utils/claudeLogger.js';
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+const BASE_SYSTEM_PROMPT = `
+You are a reviewer and synthesizer inside Rootwork, a community-centered data platform.
+You are never the decision-maker. Every output you produce is a draft for human review.
+You never rewrite, summarize, or paraphrase community voice documentation.
+Community members are compensated experts whose knowledge is primary, not supplementary.
+Do not center the organization's expertise over community-defined priorities.
+You are not an evaluator of organizational performance. You surface patterns, name gaps, and ask questions.
+`;
+
+export async function agent01_missionFraming({ orgId, userId, inputs }) {
+  const { who_is_most_affected, definition_of_success, theory_of_change } = inputs;
+
+  const systemPrompt = `
+${BASE_SYSTEM_PROMPT}
+
+Your specific task: Review the org's mission framing inputs and:
+1. Draft a mission statement in 2-3 sentences that centers who is most affected (not the organization itself).
+2. Flag any language that centers the institution over the community — be specific about which phrase and why.
+3. Flag any vague language that avoids naming who is affected or what change looks like.
+
+Format your response as JSON:
+{
+  "draft_mission": "...",
+  "flags": [
+    { "type": "institution_centered" | "vague_language", "excerpt": "...", "suggestion": "..." }
+  ]
+}
+`;
+
+  const userPrompt = `
+Org's mission framing inputs:
+- Who is most affected by your program: ${who_is_most_affected}
+- What does success look like: ${definition_of_success}
+- Theory of change: ${theory_of_change}
+`;
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1000,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }]
+  });
+
+  const rawOutput = response.content[0].text;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(rawOutput);
+  } catch {
+    // If Claude didn't return valid JSON, return raw with error flag
+    parsed = { draft_mission: rawOutput, flags: [], parse_error: true };
+  }
+
+  await logClaudeInteraction({
+    orgId,
+    userId,
+    stage: '01',
+    interactionType: 'gap_flag',
+    promptSummary: 'Mission framing review — 3 inputs',
+    outputSummary: `Draft generated. ${parsed.flags?.length || 0} flags raised.`,
+    tokensUsed: response.usage.input_tokens + response.usage.output_tokens
+  });
+
+  return parsed;
+}
+```
+
+---
+
+## Claude Interaction Logger
+
+```js
+// utils/claudeLogger.js
+import { supabase } from '../lib/supabaseClient.js';
+
+export async function logClaudeInteraction({
+  orgId, userId, stage, interactionType,
+  promptSummary, outputSummary, tokensUsed
+}) {
+  const { error } = await supabase.from('claude_interactions').insert({
+    org_id: orgId,
+    user_id: userId,
+    stage,
+    interaction_type: interactionType,
+    prompt_summary: promptSummary,
+    output_summary: outputSummary,
+    model: 'claude-sonnet-4-6',
+    tokens_used: tokensUsed
+  });
+
+  if (error) {
+    // Log to console but don't throw — interaction logging should never crash the response
+    console.error('Claude interaction log failed:', error.message);
+  }
+}
+```
+
+---
+
+## Agent Index (All 15)
+
+| File | Agent | Stage | Tier |
+|---|---|---|---|
+| `agent01_missionFraming.js` | Mission Framing Agent | 01 | Free |
+| `agent02_stakeholderGap.js` | Stakeholder Gap Flagger | 01 | Free |
+| `agent03_programAlignment.js` | Program Design Alignment | 01 | Free |
+| `agent04_sowExtraction.js` | SOW Metric Extraction | 02 | Free |
+| `agent05_engagementTemplates.js` | Community Engagement Templates | 02 | Free |
+| `agent06_voiceFlagger.js` | Community Voice Synthesis Flagger | 02 | Free |
+| `agent07_tensionSurfacing.js` | Tension Surfacing Agent | 02b | Free |
+| `agent08_collectionGapReview.js` | Collection Tool Gap Reviewer | 03 | Starter |
+| `agent09_consentDraft.js` | Consent Language Drafter | 03 | Starter |
+| `agent10_trendAnomaly.js` | Trend Anomaly Flagger | 04 | Growth |
+| `agent11_reportNarrative.js` | Funder Report Narrative Drafter | 04 | Growth |
+| `agent12_logPatterns.js` | Measurement Log Pattern Surfacer | 04 | Growth |
+| `agent13_policyBuilder.js` | AI Policy Builder | 04 | Growth |
+| `agent14_fundingMatch.js` | Funding Match Summary | 05 | Enterprise |
+| `agent15_policyInput.js` | Policy Input Document Generator | 05 | Enterprise |
+
+---
+
+## What This Agent Does Not Do
+
+- Does not generate React components (use component-agent rules)
+- Does not write SQL migrations (use schema-agent rules)
+- Does not write marketing copy (use marketing-agent prompt in Claude Projects)

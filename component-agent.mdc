@@ -1,0 +1,191 @@
+# Rootwork — Component Agent Rules
+# File: .cursor/rules/component-agent.mdc
+# Applies to: **/*.jsx, **/*.tsx, **/components/*, **/pages/*
+
+---
+
+## Your Role
+
+You are the Component Agent. You build React components for Rootwork. Every component you generate must follow the design system, enforce the values framework in the UI, and never expose sensitive operations to the client.
+
+---
+
+## Design System
+
+### Colors (Tailwind custom or inline style)
+```
+Primary Green:   #2D6A2F  — headers, accents, primary buttons, active states
+Light Green:     #A8D4AA  — secondary accents, table highlights, dividers
+Warm White:      #FAF9F7  — page background (never pure white)
+Charcoal:        #2C2C2C  — body text (never pure black)
+White:           #FFFFFF  — text on dark green backgrounds only
+```
+
+### Typography
+- Headers: Georgia (serif), bold
+- Body: DM Sans or system-ui (sans-serif)
+- H1: 32px Georgia bold / H2: 26px Georgia bold / H3: 22px sans bold / Body: 16px sans
+
+### Tailwind Config Additions (add to tailwind.config.js)
+```js
+colors: {
+  'rw-green': '#2D6A2F',
+  'rw-green-light': '#A8D4AA',
+  'rw-warm-white': '#FAF9F7',
+  'rw-charcoal': '#2C2C2C',
+}
+```
+
+---
+
+## Required Component Patterns
+
+### Draft Label (Required on All Claude Output)
+```jsx
+// Use this component everywhere Claude output is displayed
+export function DraftLabel({ context = "AI draft — review and edit before use" }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded text-sm text-amber-800 font-medium mb-3">
+      <span>⚠</span>
+      <span>{context}</span>
+    </div>
+  );
+}
+
+// Usage
+<DraftLabel />
+<DraftLabel context="AI-extracted — confirm against original document" />
+<DraftLabel context="AI-surfaced — verify before acting" />
+```
+
+### Stage Gate Locked State
+```jsx
+// Show this when a stage is locked — never just hide content
+export function StageLocked({ reason, requiredAction }) {
+  return (
+    <div className="border-2 border-rw-green-light rounded-lg p-8 text-center bg-rw-warm-white">
+      <div className="text-rw-green font-georgia text-xl font-bold mb-3">
+        This stage is not yet available
+      </div>
+      <p className="text-rw-charcoal mb-4">{reason}</p>
+      {requiredAction && (
+        <p className="text-sm text-rw-charcoal/70">
+          Required: {requiredAction}
+        </p>
+      )}
+    </div>
+  );
+}
+```
+
+### Community Voice Display (Verbatim Only)
+```jsx
+// Community voice is always displayed verbatim — never summarized
+// This component enforces that visually
+export function CommunityVoiceRecord({ record }) {
+  return (
+    <blockquote className="border-l-4 border-rw-green pl-4 py-2 my-3 bg-rw-warm-white rounded-r">
+      <p className="text-rw-charcoal italic">"{record.voice_content}"</p>
+      <footer className="text-sm text-rw-charcoal/60 mt-1">
+        {record.speaker_role} · {record.engagement_context}
+      </footer>
+    </blockquote>
+  );
+}
+// ❌ Never pass community voice through a summarizer before display
+// ❌ Never display "Key themes from community input: ..."
+```
+
+### Form Field with Equity Prompt
+```jsx
+// Guided prompts in Stage 01 follow this pattern
+export function EquityPromptField({ label, prompt, hint, value, onChange, name }) {
+  return (
+    <div className="mb-6">
+      <label className="block font-georgia font-bold text-rw-green text-lg mb-1">
+        {label}
+      </label>
+      {prompt && (
+        <p className="text-rw-charcoal/80 text-sm mb-3 leading-relaxed">{prompt}</p>
+      )}
+      <textarea
+        name={name}
+        value={value}
+        onChange={onChange}
+        className="w-full border border-rw-green-light rounded p-3 text-rw-charcoal bg-white focus:outline-none focus:ring-2 focus:ring-rw-green min-h-[120px]"
+      />
+      {hint && (
+        <p className="text-xs text-rw-charcoal/50 mt-1">{hint}</p>
+      )}
+    </div>
+  );
+}
+```
+
+---
+
+## Hard Stop UI Pattern
+
+The Community Voice Hard Stop is enforced at the server. But the UI must prepare the org for it honestly, not surprise them with a wall.
+
+```jsx
+// Show this BEFORE the org begins community engagement — not after
+export function HardStopPrepNotice() {
+  return (
+    <div className="bg-rw-green text-white rounded-lg p-6 my-6">
+      <h3 className="font-georgia text-xl font-bold mb-2">
+        Rootwork will wait for you here.
+      </h3>
+      <p className="text-white/90 leading-relaxed">
+        The next step is real engagement — interviews, listening sessions, or meetings with community members. Rootwork will not unlock the next stage until you return and document who was in the room, who wasn't, and why.
+      </p>
+      <p className="text-white/70 text-sm mt-3">
+        This is not a checkbox. It's the work.
+      </p>
+    </div>
+  );
+}
+```
+
+---
+
+## API Call Pattern from Frontend
+
+Frontend components never call Claude directly. They call the backend.
+
+```jsx
+// ✅ CORRECT — call your own backend
+async function generateMissionDraft() {
+  setLoading(true);
+  const res = await fetch('/api/stage01/mission-draft', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` },
+    body: JSON.stringify({ orgId })
+  });
+  const { draft, flags } = await res.json();
+  setMissionDraft(draft);
+  setMissionFlags(flags);
+  setLoading(false);
+}
+
+// ❌ WRONG — never call Anthropic from the frontend
+const anthropic = new Anthropic({ apiKey: '...' });
+```
+
+---
+
+## Accessibility Rules
+
+- All form inputs have associated `<label>` elements
+- All interactive elements are keyboard navigable
+- Color is never the only indicator of state — always pair with text or icon
+- Font sizes never below 14px for body content
+- Stage progress indicators include text labels, not just icons or colors
+
+---
+
+## What This Agent Does Not Do
+
+- Does not generate Supabase queries (use schema-agent rules)
+- Does not write Claude agent prompts (use api-agent rules)
+- Does not write Express routes (use api-agent rules)

@@ -1,0 +1,201 @@
+# Rootwork — Schema Agent Rules
+# File: .cursor/rules/schema-agent.mdc
+# Applies to: **/*.sql, **/supabase/*, **/migrations/*, **/schema*
+
+---
+
+## Your Role
+
+You are the Schema Agent. You govern all database work in Rootwork. Before generating any SQL, migration, or Supabase query, you check the Rootwork Schema document. You enforce RLS, gate logic, and the verbatim community voice requirement at the data layer.
+
+---
+
+## Table Creation Checklist
+
+When generating a CREATE TABLE statement, always include:
+
+```sql
+-- ✅ Required on every table
+ALTER TABLE table_name ENABLE ROW LEVEL SECURITY;
+
+-- ✅ updated_at trigger on every table that has an updated_at column
+CREATE TRIGGER set_updated_at
+  BEFORE UPDATE ON table_name
+  FOR EACH ROW EXECUTE FUNCTION handle_updated_at();
+
+-- ✅ Audit columns on every table
+id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+created_at timestamptz NOT NULL DEFAULT now(),
+updated_at timestamptz
+```
+
+---
+
+## RLS Policy Patterns
+
+### Org members only (most tables)
+```sql
+-- Read
+CREATE POLICY "org_members_read" ON table_name
+  FOR SELECT USING (
+    org_id IN (
+      SELECT org_id FROM org_members WHERE user_id = auth.uid()
+    )
+  );
+
+-- Write
+CREATE POLICY "org_members_write" ON table_name
+  FOR INSERT WITH CHECK (
+    org_id IN (
+      SELECT org_id FROM org_members WHERE user_id = auth.uid()
+    )
+  );
+```
+
+### Server-side write only (claude_interactions, stage_progress)
+```sql
+-- No direct client writes — service role only
+CREATE POLICY "server_write_only" ON stage_progress
+  FOR INSERT WITH CHECK (false); -- Client cannot insert
+-- Service role key bypasses RLS — server handles writes
+```
+
+### Admin only (funding_opportunities)
+```sql
+CREATE POLICY "admin_read_all" ON funding_opportunities
+  FOR SELECT USING (is_active = true);
+
+CREATE POLICY "admin_write" ON funding_opportunities
+  FOR ALL USING (auth.jwt() ->> 'role' = 'service_role');
+```
+
+---
+
+## Gate Enforcement SQL Checks
+
+Use these exact queries in middleware. Do not approximate.
+
+### Hard Stop Gate (Stage 02 → Stage 03)
+```sql
+SELECT id FROM community_engagements
+WHERE org_id = $1
+  AND who_was_present IS NOT NULL
+  AND who_was_absent IS NOT NULL
+  AND why_absent IS NOT NULL
+LIMIT 1;
+```
+
+### Reconciliation Gate (Stage 02b → Stage 03 unlock)
+```sql
+SELECT reconciliation_completed_at FROM program_design_reconciliations
+WHERE org_id = $1
+  AND reconciliation_completed_at IS NOT NULL
+LIMIT 1;
+```
+
+### Tier Gate (Stage 04)
+```sql
+SELECT tier FROM organizations
+WHERE id = $1
+  AND tier IN ('growth', 'enterprise');
+```
+
+### Tier Gate (Stage 05)
+```sql
+SELECT tier FROM organizations
+WHERE id = $1
+  AND tier = 'enterprise';
+```
+
+### Multi-user Gate (below Enterprise)
+```sql
+SELECT COUNT(*) FROM org_members
+WHERE org_id = $1;
+-- Reject if count >= 1 and org.tier != 'enterprise'
+```
+
+---
+
+## Community Voice Schema Rules
+
+The `community_voice_records` table stores community member input verbatim.
+
+```sql
+-- ✅ These columns are stored exactly as entered — never processed
+voice_content text NOT NULL  -- verbatim, as entered
+speaker_role text            -- community_member, staff, partner (not their words, just their role)
+
+-- ❌ Never add columns like:
+-- voice_summary text        -- Claude does not summarize voice records
+-- voice_paraphrase text     -- never
+-- voice_themes jsonb        -- never on individual records
+```
+
+---
+
+## Program Design Versioning
+
+```sql
+-- ✅ CORRECT — always insert a new version
+INSERT INTO program_designs (org_id, version, version_label, ...)
+VALUES ($orgId, $currentMax + 1, 'Post-community reconciliation', ...);
+
+-- ❌ WRONG — never update an existing version
+UPDATE program_designs SET program_model = $newModel WHERE id = $id;
+```
+
+To get the current max version:
+```sql
+SELECT MAX(version) FROM program_designs WHERE org_id = $1;
+```
+
+---
+
+## Required Indexes (from Schema Doc)
+
+Run these after creating the tables. All of them.
+
+```sql
+CREATE INDEX ON org_members (org_id);
+CREATE INDEX ON org_members (user_id);
+CREATE INDEX ON stakeholders (org_id);
+CREATE INDEX ON program_designs (org_id, version);
+CREATE INDEX ON sow_uploads (org_id);
+CREATE INDEX ON funder_metrics (org_id);
+CREATE INDEX ON engagement_templates (org_id);
+CREATE INDEX ON community_engagements (org_id);
+CREATE INDEX ON community_voice_records (org_id, engagement_id);
+CREATE INDEX ON program_design_reconciliations (org_id);
+CREATE INDEX ON collection_tools (org_id);
+CREATE INDEX ON collection_responses (org_id, collection_tool_id);
+CREATE INDEX ON stage_progress (org_id, stage);
+CREATE INDEX ON claude_interactions (org_id, created_at);
+CREATE INDEX ON funding_opportunities (is_active, opportunity_type);
+```
+
+---
+
+## Supabase Query Patterns (Backend)
+
+Always use the service role client on the backend, never the anon client.
+
+```js
+// ✅ Backend — service role client
+import { createClient } from '@supabase/supabase-js';
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY // service role — bypasses RLS for server operations
+);
+
+// ✅ Frontend — anon client only
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY // anon key — subject to RLS
+);
+```
+
+Always handle errors:
+```js
+const { data, error } = await supabase.from('organizations').select('*').eq('id', orgId).single();
+if (error) throw new Error(`DB error: ${error.message}`);
+```
