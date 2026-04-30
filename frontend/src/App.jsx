@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import NewOrg from "./pages/NewOrg";
 import MissionFraming from "./pages/stage01/MissionFraming";
+import ProgramDesign from "./pages/stage01/ProgramDesign";
 import StakeholderEducation from "./pages/stage01/StakeholderEducation";
 import StakeholderMap from "./pages/stage01/StakeholderMap";
 
@@ -50,6 +51,14 @@ function App() {
         element={
           <ProtectedRoute>
             <StakeholderMap />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage01/program-design"
+        element={
+          <ProtectedRoute>
+            <ProgramDesign />
           </ProtectedRoute>
         }
       />

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabaseClient";
 
 const stakeholderTypeOptions = [
@@ -17,12 +18,36 @@ const relationshipOptions = [
   "other",
 ];
 
+function DraftLabel() {
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        marginBottom: "10px",
+        padding: "6px 12px",
+        borderRadius: "8px",
+        backgroundColor: "#ECFDF3",
+        color: "#166534",
+        fontFamily: '"DM Sans", system-ui, sans-serif',
+        fontSize: "0.76rem",
+        fontWeight: 600,
+      }}
+    >
+      AI-surfaced — verify before acting
+    </span>
+  );
+}
+
 function StakeholderMap() {
+  const navigate = useNavigate();
   const [stakeholders, setStakeholders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState("");
+  const [continueError, setContinueError] = useState("");
+  const [gapAnalysis, setGapAnalysis] = useState(null);
   const [form, setForm] = useState({
     name: "",
     stakeholder_type: "community_member",
@@ -102,6 +127,7 @@ function StakeholderMap() {
     event.preventDefault();
     setIsSaving(true);
     setError("");
+    setContinueError("");
 
     const accessToken = await getAccessToken();
     if (!accessToken) {
@@ -134,6 +160,7 @@ function StakeholderMap() {
       await loadStakeholders();
       resetForm();
       setIsAdding(false);
+      setGapAnalysis(null);
     } catch (saveError) {
       setError(saveError.message || "Could not add stakeholder.");
     } finally {
@@ -143,6 +170,7 @@ function StakeholderMap() {
 
   async function handleDeleteStakeholder(id) {
     setError("");
+    setContinueError("");
 
     const accessToken = await getAccessToken();
     if (!accessToken) {
@@ -170,8 +198,62 @@ function StakeholderMap() {
       }
 
       setStakeholders((prev) => prev.filter((stakeholder) => stakeholder.id !== id));
+      setGapAnalysis(null);
     } catch (deleteError) {
       setError(deleteError.message || "Could not delete stakeholder.");
+    }
+  }
+
+  async function handleSaveAndContinue() {
+    if (stakeholders.length < 2) {
+      setContinueError("Add at least 2 stakeholders before continuing.");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setError("");
+    setContinueError("");
+
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      setError("Your session has expired. Please sign in again.");
+      setIsAnalyzing(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/stage01/stakeholder-gap`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        let backendError = "Could not analyze stakeholder map.";
+        try {
+          const payload = await response.json();
+          if (payload?.error) backendError = payload.error;
+        } catch {
+          // ignore parse failures
+        }
+        throw new Error(backendError);
+      }
+
+      const payload = await response.json();
+      setGapAnalysis({
+        power_gaps: Array.isArray(payload?.power_gaps) ? payload.power_gaps : [],
+        missing_stakeholder_types: Array.isArray(payload?.missing_stakeholder_types)
+          ? payload.missing_stakeholder_types
+          : [],
+        questions_to_consider: Array.isArray(payload?.questions_to_consider)
+          ? payload.questions_to_consider
+          : [],
+      });
+    } catch (analysisError) {
+      setError(analysisError.message || "Could not analyze stakeholder map.");
+    } finally {
+      setIsAnalyzing(false);
     }
   }
 
@@ -206,7 +288,7 @@ function StakeholderMap() {
             textAlign: "center",
           }}
         >
-          Stakeholder mapping
+          Map your stakeholders
         </h1>
         <p
           style={{
@@ -217,7 +299,8 @@ function StakeholderMap() {
             textAlign: "center",
           }}
         >
-          Add the people and organizations connected to your program.
+          Add everyone who is affected by, accountable to, or involved in your
+          program. Be honest about who holds power and who doesn't.
         </p>
 
         <div style={{ display: "flex", justifyContent: "center", marginBottom: "20px" }}>
@@ -226,6 +309,7 @@ function StakeholderMap() {
             onClick={() => {
               setIsAdding((prev) => !prev);
               setError("");
+              setContinueError("");
             }}
             style={{
               padding: "10px 16px",
@@ -264,8 +348,18 @@ function StakeholderMap() {
                 fontWeight: 700,
               }}
             >
-              Name
+              Name or group
             </label>
+            <p
+              style={{
+                margin: "0 0 8px",
+                color: "#6B7280",
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                fontSize: "0.84rem",
+              }}
+            >
+              This can be an individual, a community group, or an organization
+            </p>
             <input
               id="stakeholderName"
               required
@@ -298,7 +392,7 @@ function StakeholderMap() {
                 fontWeight: 700,
               }}
             >
-              Stakeholder type
+              What best describes them?
             </label>
             <select
               id="stakeholderType"
@@ -336,7 +430,7 @@ function StakeholderMap() {
                 fontWeight: 700,
               }}
             >
-              Relationship to program
+              How are they connected to your program?
             </label>
             <select
               id="stakeholderRelationship"
@@ -365,30 +459,73 @@ function StakeholderMap() {
             </select>
 
             <label
-              htmlFor="isDecisionMaker"
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                marginBottom: "12px",
-                color: "#2C2C2C",
-                fontFamily: '"DM Sans", system-ui, sans-serif',
-                fontSize: "0.95rem",
+                display: "block",
+                marginBottom: "8px",
+                color: "#2D6A2F",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
               }}
             >
-              <input
-                id="isDecisionMaker"
-                type="checkbox"
-                checked={form.is_decision_maker}
-                onChange={(event) =>
+              Do they hold decision-making power in your program?
+            </label>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                gap: "10px",
+                marginBottom: "12px",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() =>
                   setForm((prev) => ({
                     ...prev,
-                    is_decision_maker: event.target.checked,
+                    is_decision_maker: true,
                   }))
                 }
-              />
-              In a decision-making role?
-            </label>
+                style={{
+                  textAlign: "left",
+                  borderRadius: "8px",
+                  border: form.is_decision_maker
+                    ? "2px solid #2D6A2F"
+                    : "1px solid #A8D4AA",
+                  backgroundColor: form.is_decision_maker ? "#F0F7F0" : "#FFFFFF",
+                  color: "#2C2C2C",
+                  padding: "12px",
+                  cursor: "pointer",
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 600,
+                }}
+              >
+                Yes, they help make decisions
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setForm((prev) => ({
+                    ...prev,
+                    is_decision_maker: false,
+                  }))
+                }
+                style={{
+                  textAlign: "left",
+                  borderRadius: "8px",
+                  border: !form.is_decision_maker
+                    ? "2px solid #2D6A2F"
+                    : "1px solid #A8D4AA",
+                  backgroundColor: !form.is_decision_maker ? "#F0F7F0" : "#FFFFFF",
+                  color: "#2C2C2C",
+                  padding: "12px",
+                  cursor: "pointer",
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 600,
+                }}
+              >
+                No, they are affected by decisions
+              </button>
+            </div>
 
             <label
               htmlFor="stakeholderNotes"
@@ -400,8 +537,18 @@ function StakeholderMap() {
                 fontWeight: 700,
               }}
             >
-              Notes
+              Anything else to note?
             </label>
+            <p
+              style={{
+                margin: "0 0 8px",
+                color: "#6B7280",
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                fontSize: "0.84rem",
+              }}
+            >
+              Power dynamics, barriers to participation, or context that matters
+            </p>
             <textarea
               id="stakeholderNotes"
               value={form.notes}
@@ -469,7 +616,11 @@ function StakeholderMap() {
                 No stakeholders added yet.
               </p>
             ) : (
-              stakeholders.map((stakeholder) => (
+              stakeholders.map((stakeholder) => {
+                const isDecisionMaker = Boolean(
+                  stakeholder.in_decision_making_role ?? stakeholder.is_decision_maker
+                );
+                return (
                 <article
                   key={stakeholder.id}
                   style={{
@@ -484,7 +635,7 @@ function StakeholderMap() {
                     alignItems: "flex-start",
                   }}
                 >
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <h3
                       style={{
                         margin: "0 0 6px",
@@ -495,25 +646,53 @@ function StakeholderMap() {
                     >
                       {stakeholder.name || "Unnamed stakeholder"}
                     </h3>
-                    <p
+                    <div
                       style={{
-                        margin: "0 0 4px",
-                        color: "#2C2C2C",
-                        fontFamily: '"DM Sans", system-ui, sans-serif',
-                        fontSize: "0.9rem",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "6px",
+                        marginBottom: "8px",
                       }}
                     >
-                      Type: {stakeholder.stakeholder_type || "other"}
-                    </p>
+                      <span
+                        style={{
+                          backgroundColor: "#A8D4AA",
+                          color: "#2D6A2F",
+                          borderRadius: "999px",
+                          padding: "4px 8px",
+                          fontFamily: '"DM Sans", system-ui, sans-serif',
+                          fontSize: "0.76rem",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {stakeholder.stakeholder_type || "other"}
+                      </span>
+                      <span
+                        style={{
+                          backgroundColor: "#A8D4AA",
+                          color: "#2D6A2F",
+                          borderRadius: "999px",
+                          padding: "4px 8px",
+                          fontFamily: '"DM Sans", system-ui, sans-serif',
+                          fontSize: "0.76rem",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {stakeholder.relationship_to_program || "other"}
+                      </span>
+                    </div>
                     <p
                       style={{
                         margin: 0,
-                        color: "#2C2C2C",
+                        color: isDecisionMaker ? "#2D6A2F" : "#6B7280",
                         fontFamily: '"DM Sans", system-ui, sans-serif',
-                        fontSize: "0.9rem",
+                        fontSize: "0.82rem",
+                        fontWeight: 600,
                       }}
                     >
-                      Relationship: {stakeholder.relationship_to_program || "other"}
+                      {isDecisionMaker
+                        ? "Decision maker"
+                        : "Affected by decisions"}
                     </p>
                   </div>
 
@@ -521,20 +700,21 @@ function StakeholderMap() {
                     type="button"
                     onClick={() => handleDeleteStakeholder(stakeholder.id)}
                     style={{
-                      padding: "6px 10px",
-                      borderRadius: "8px",
-                      border: "1px solid #FCA5A5",
-                      backgroundColor: "#FEF2F2",
+                      padding: 0,
+                      border: "none",
+                      backgroundColor: "transparent",
                       color: "#B42318",
                       cursor: "pointer",
                       fontFamily: '"DM Sans", system-ui, sans-serif',
-                      fontWeight: 600,
+                      fontWeight: 700,
+                      textDecoration: "underline",
                     }}
                   >
-                    Delete
+                    Remove
                   </button>
                 </article>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -549,6 +729,189 @@ function StakeholderMap() {
             }}
           >
             {error}
+          </p>
+        ) : null}
+        {gapAnalysis ? (
+          <div
+            style={{
+              marginTop: "18px",
+              border: "1px solid #A8D4AA",
+              borderRadius: "10px",
+              backgroundColor: "#F0F7F0",
+              padding: "16px",
+              textAlign: "left",
+            }}
+          >
+            <DraftLabel />
+            <h3
+              style={{
+                margin: "0 0 8px",
+                color: "#2D6A2F",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
+                fontSize: "1.05rem",
+              }}
+            >
+              Power gaps noticed
+            </h3>
+            <ul style={{ margin: "0 0 14px", color: "#2C2C2C", paddingLeft: "20px" }}>
+              {(gapAnalysis.power_gaps || []).map((item, idx) => (
+                <li
+                  key={`power-${idx}`}
+                  style={{
+                    marginBottom: "6px",
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontSize: "0.92rem",
+                  }}
+                >
+                  {item}
+                </li>
+              ))}
+            </ul>
+
+            <h3
+              style={{
+                margin: "0 0 8px",
+                color: "#2D6A2F",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
+                fontSize: "1.05rem",
+              }}
+            >
+              Stakeholder types not yet mapped
+            </h3>
+            <ul style={{ margin: "0 0 14px", color: "#2C2C2C", paddingLeft: "20px" }}>
+              {(gapAnalysis.missing_stakeholder_types || []).map((item, idx) => (
+                <li
+                  key={`missing-${idx}`}
+                  style={{
+                    marginBottom: "6px",
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontSize: "0.92rem",
+                  }}
+                >
+                  {item}
+                </li>
+              ))}
+            </ul>
+
+            <h3
+              style={{
+                margin: "0 0 8px",
+                color: "#2D6A2F",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
+                fontSize: "1.05rem",
+              }}
+            >
+              Questions to sit with
+            </h3>
+            <ul style={{ margin: 0, color: "#2C2C2C", paddingLeft: "20px" }}>
+              {(gapAnalysis.questions_to_consider || []).map((item, idx) => (
+                <li
+                  key={`question-${idx}`}
+                  style={{
+                    marginBottom: "6px",
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontSize: "0.92rem",
+                    fontStyle: "italic",
+                  }}
+                >
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {gapAnalysis ? (
+          <div
+            style={{
+              marginTop: "14px",
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: "10px",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setGapAnalysis(null)}
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: "8px",
+                border: "1px solid #2D6A2F",
+                backgroundColor: "#FFFFFF",
+                color: "#2D6A2F",
+                cursor: "pointer",
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                fontWeight: 600,
+                fontSize: "0.95rem",
+              }}
+            >
+              Add more stakeholders
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/stage01/program-design")}
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: "8px",
+                border: "none",
+                backgroundColor: "#2D6A2F",
+                color: "#FFFFFF",
+                cursor: "pointer",
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                fontWeight: 600,
+                fontSize: "0.95rem",
+              }}
+            >
+              Continue to program design
+            </button>
+          </div>
+        ) : isAnalyzing ? (
+          <p
+            style={{
+              marginTop: "16px",
+              color: "#6B7280",
+              fontFamily: '"DM Sans", system-ui, sans-serif',
+              textAlign: "center",
+            }}
+          >
+            Analyzing your stakeholder map...
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSaveAndContinue}
+            style={{
+              width: "100%",
+              marginTop: "16px",
+              padding: "12px",
+              borderRadius: "8px",
+              border: "none",
+              backgroundColor: "#2D6A2F",
+              color: "#FFFFFF",
+              cursor: "pointer",
+              fontFamily: '"DM Sans", system-ui, sans-serif',
+              fontWeight: 600,
+              fontSize: "1rem",
+            }}
+          >
+            Save and continue
+          </button>
+        )}
+        {continueError ? (
+          <p
+            style={{
+              marginTop: "10px",
+              color: "#B42318",
+              fontFamily: '"DM Sans", system-ui, sans-serif',
+              textAlign: "center",
+            }}
+          >
+            {continueError}
           </p>
         ) : null}
       </section>

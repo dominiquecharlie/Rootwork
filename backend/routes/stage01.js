@@ -1,6 +1,7 @@
 const express = require("express");
 const { supabase } = require("../lib/supabaseClient");
 const { agent01_missionFraming } = require("../agents/agent01_missionFraming");
+const { agent02_stakeholderGap } = require("../agents/agent02_stakeholderGap");
 
 const router = express.Router();
 
@@ -248,6 +249,65 @@ router.delete("/stakeholders/:id", async (req, res) => {
     }
 
     return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+router.post("/stakeholder-gap", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const { data: stakeholders, error: stakeholderError } = await supabase
+      .from("stakeholders")
+      .select("name, stakeholder_type, relationship_to_program, in_decision_making_role")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: true });
+
+    if (stakeholderError) {
+      return res.status(400).json({ error: stakeholderError.message });
+    }
+
+    const { data: orgProfile, error: profileError } = await supabase
+      .from("org_profiles")
+      .select("who_is_most_affected, theory_of_change")
+      .eq("org_id", orgId)
+      .maybeSingle();
+
+    if (profileError) {
+      return res.status(400).json({ error: profileError.message });
+    }
+
+    const gapAnalysis = await agent02_stakeholderGap({
+      orgId,
+      userId: user.id,
+      stakeholders: stakeholders || [],
+      context: {
+        who_is_most_affected: orgProfile?.who_is_most_affected || "",
+        theory_of_change: orgProfile?.theory_of_change || "",
+      },
+    });
+
+    return res.status(200).json({
+      power_gaps: Array.isArray(gapAnalysis.power_gaps)
+        ? gapAnalysis.power_gaps
+        : [],
+      missing_stakeholder_types: Array.isArray(
+        gapAnalysis.missing_stakeholder_types
+      )
+        ? gapAnalysis.missing_stakeholder_types
+        : [],
+      questions_to_consider: Array.isArray(gapAnalysis.questions_to_consider)
+        ? gapAnalysis.questions_to_consider
+        : [],
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message || "Server error." });
