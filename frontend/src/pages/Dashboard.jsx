@@ -13,6 +13,17 @@ const stageCards = [
   { key: "05", label: "Connect" },
 ];
 
+const stageRoutes = {
+  "01": "/stage01/mission",
+  "02_sow": "/stage02/sow",
+  "02_templates": "/stage02/templates",
+  "02_hardstop": "/stage02/hardstop",
+  "02b": "/stage02b/reconcile",
+  "03": "/stage03/collect",
+  "04": "/stage04/analyze",
+  "05": "/stage05/connect",
+};
+
 function Dashboard() {
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
@@ -85,6 +96,7 @@ function Dashboard() {
   function normalizeStatus(rawStatus) {
     if (rawStatus === "in_progress") return "in_progress";
     if (rawStatus === "completed" || rawStatus === "complete") return "complete";
+    if (rawStatus === "not_started") return "not_started";
     return "locked";
   }
 
@@ -92,6 +104,152 @@ function Dashboard() {
     if (status === "in_progress") return "#2D6A2F";
     if (status === "complete") return "#2C2C2C";
     return "#A8D4AA";
+  }
+
+  function renderStatusIcon(status) {
+    if (status === "in_progress") {
+      return (
+        <div
+          aria-hidden="true"
+          style={{
+            width: "24px",
+            height: "24px",
+            borderRadius: "999px",
+            backgroundColor: "#2D6A2F",
+            position: "relative",
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-35%, -50%)",
+              width: 0,
+              height: 0,
+              borderTop: "5px solid transparent",
+              borderBottom: "5px solid transparent",
+              borderLeft: "8px solid #FFFFFF",
+            }}
+          />
+        </div>
+      );
+    }
+
+    if (status === "complete") {
+      return (
+        <div
+          aria-hidden="true"
+          style={{
+            width: "24px",
+            height: "24px",
+            borderRadius: "999px",
+            backgroundColor: "#2D6A2F",
+            position: "relative",
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              left: "50%",
+              top: "50%",
+              width: "6px",
+              height: "11px",
+              borderRight: "2px solid #FFFFFF",
+              borderBottom: "2px solid #FFFFFF",
+              transform: "translate(-45%, -60%) rotate(42deg)",
+            }}
+          />
+        </div>
+      );
+    }
+
+    if (status === "not_started") {
+      return (
+        <div
+          aria-hidden="true"
+          style={{
+            width: "22px",
+            height: "24px",
+            position: "relative",
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              left: "8px",
+              top: "0px",
+              width: "8px",
+              height: "8px",
+              border: "2px solid #A8D4AA",
+              borderBottom: "none",
+              borderRadius: "8px 8px 0 0",
+              transform: "rotate(16deg)",
+              transformOrigin: "left bottom",
+              backgroundColor: "transparent",
+            }}
+          />
+          <span
+            style={{
+              position: "absolute",
+              left: "3px",
+              bottom: "0px",
+              width: "16px",
+              height: "12px",
+              border: "2px solid #A8D4AA",
+              borderRadius: "2px",
+              backgroundColor: "transparent",
+            }}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div
+        aria-hidden="true"
+        style={{
+          width: "22px",
+          height: "24px",
+          position: "relative",
+          flexShrink: 0,
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            left: "5px",
+            top: "0px",
+            width: "8px",
+            height: "8px",
+            border: "2px solid #6B7280",
+            borderBottom: "none",
+            borderRadius: "8px 8px 0 0",
+            backgroundColor: "transparent",
+          }}
+        />
+        <span
+          style={{
+            position: "absolute",
+            left: "3px",
+            bottom: "0px",
+            width: "16px",
+            height: "12px",
+            border: "2px solid #6B7280",
+            borderRadius: "2px",
+            backgroundColor: "#6B7280",
+          }}
+        />
+      </div>
+    );
+  }
+
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    navigate("/login", { replace: true });
   }
 
   return (
@@ -117,6 +275,25 @@ function Dashboard() {
           textAlign: "center",
         }}
       >
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "8px" }}>
+          <button
+            type="button"
+            onClick={handleSignOut}
+            style={{
+              border: "1px solid #2D6A2F",
+              borderRadius: "8px",
+              backgroundColor: "transparent",
+              color: "#2D6A2F",
+              padding: "6px 10px",
+              fontFamily: '"DM Sans", system-ui, sans-serif',
+              fontSize: "0.86rem",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Sign out
+          </button>
+        </div>
         <h1
           style={{
             color: "#2D6A2F",
@@ -137,10 +314,24 @@ function Dashboard() {
           {stageCards.map((stage) => {
             const matchedStage = stageProgress.find((entry) => entry.stage === stage.key);
             const status = normalizeStatus(matchedStage?.status);
+            const isClickable = status === "in_progress" || status === "complete";
+            const stageRoute = stageRoutes[stage.key];
 
             return (
               <article
                 key={stage.key}
+                onClick={() => {
+                  if (isClickable && stageRoute) {
+                    navigate(stageRoute);
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if ((event.key === "Enter" || event.key === " ") && isClickable && stageRoute) {
+                    navigate(stageRoute);
+                  }
+                }}
                 style={{
                   width: "100%",
                   maxWidth: "620px",
@@ -151,19 +342,26 @@ function Dashboard() {
                   padding: "14px 16px",
                   textAlign: "left",
                   boxSizing: "border-box",
+                  cursor: isClickable ? "pointer" : "not-allowed",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
                 }}
               >
-                <h3
-                  style={{
-                    margin: 0,
-                    color: "#2D6A2F",
-                    fontFamily: "Georgia, serif",
-                    fontWeight: 700,
-                    fontSize: "1.1rem",
-                  }}
-                >
-                  {stage.label}
-                </h3>
+                <div>
+                  <h3
+                    style={{
+                      margin: 0,
+                      color: "#2D6A2F",
+                      fontFamily: "Georgia, serif",
+                      fontWeight: 700,
+                      fontSize: "1.1rem",
+                    }}
+                  >
+                    {stage.label}
+                  </h3>
+                </div>
+                {renderStatusIcon(status)}
               </article>
             );
           })}

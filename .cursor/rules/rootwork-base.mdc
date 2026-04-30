@@ -1,0 +1,14 @@
+---
+description: Rootwork global coding and writing rules
+alwaysApply: true
+---
+
+# Rootwork Base Rules
+
+## Writing Rules
+
+WRITING RULES — APPLY TO ALL GENERATED CONTENT INCLUDING UI COPY:
+- Never use em dashes (—) anywhere. Not in component text, not in comments, not in placeholder copy.
+- Never use the pattern "X — Y" or "X - Y" to contrast two ideas.
+- Use a period, comma, or restructure the sentence instead.
+- This applies to every string, label, heading, body text, and placeholder in every component.
