@@ -4,6 +4,7 @@ import AuthCallback from "./pages/AuthCallback";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import NewOrg from "./pages/NewOrg";
+import MissionFraming from "./pages/stage01/MissionFraming";
 
 function App() {
   return (
@@ -23,6 +24,14 @@ function App() {
         element={
           <ProtectedRoute>
             <NewOrg />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage01/mission"
+        element={
+          <ProtectedRoute>
+            <MissionFraming />
           </ProtectedRoute>
         }
       />

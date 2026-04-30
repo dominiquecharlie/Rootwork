@@ -109,6 +109,8 @@ create table if not exists public.org_profiles (
   who_is_most_affected text,
   definition_of_success text,
   theory_of_change text,
+  draft_mission_statement text,
+  claude_mission_flags jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz
 );
@@ -681,3 +683,7 @@ create index if not exists collection_responses_org_tool_idx on public.collectio
 create index if not exists stage_progress_org_stage_idx on public.stage_progress (org_id, stage);
 create index if not exists claude_interactions_org_created_idx on public.claude_interactions (org_id, created_at);
 create index if not exists funding_opportunities_active_type_idx on public.funding_opportunities (is_active, opportunity_type);
+
+-- If org_profiles already existed without mission-draft columns, run once:
+alter table public.org_profiles add column if not exists draft_mission_statement text;
+alter table public.org_profiles add column if not exists claude_mission_flags jsonb not null default '[]'::jsonb;
