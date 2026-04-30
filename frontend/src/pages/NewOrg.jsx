@@ -7,6 +7,8 @@ function NewOrg() {
   const [orgName, setOrgName] = useState("");
   const [orgType, setOrgType] = useState("nonprofit");
   const [primaryGeography, setPrimaryGeography] = useState("");
+  const [orgPhase, setOrgPhase] = useState("");
+  const [orgPhaseError, setOrgPhaseError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -16,6 +18,13 @@ function NewOrg() {
     setIsSubmitting(true);
     setMessage("");
     setError("");
+    setOrgPhaseError("");
+
+    if (!orgPhase) {
+      setOrgPhaseError("Please select where you are starting from");
+      setIsSubmitting(false);
+      return;
+    }
 
     const {
       data: { session },
@@ -40,6 +49,7 @@ function NewOrg() {
         name: orgName,
         orgType,
         primaryGeography,
+        org_phase: orgPhase,
       }),
     });
 
@@ -63,10 +73,11 @@ function NewOrg() {
     setOrgName("");
     setOrgType("nonprofit");
     setPrimaryGeography("");
+    setOrgPhase("");
     setIsSubmitting(false);
 
     setTimeout(() => {
-      navigate("/dashboard", { replace: true });
+      navigate("/stage01/mission", { replace: true });
     }, 400);
   }
 
@@ -179,6 +190,96 @@ function NewOrg() {
             onChange={(event) => setPrimaryGeography(event.target.value)}
             style={fieldInputStyle}
           />
+
+          <label style={fieldLabelStyle}>Where are you starting from?</label>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+              marginBottom: "14px",
+            }}
+          >
+            {[
+              {
+                value: "scratch",
+                title: "Building from scratch",
+                description:
+                  "You're a new or early-stage organization ready to build your mission, stakeholders, and program design for the first time.",
+              },
+              {
+                value: "audit",
+                title: "Auditing an existing program",
+                description:
+                  "You have a program already running and want to bring it into Rootwork to audit, rebuild, and strengthen your data infrastructure.",
+              },
+              {
+                value: "new_program",
+                title: "Launching a new program",
+                description:
+                  "Your organization is established but you're starting a new program and want to build it right from the beginning.",
+              },
+            ].map((option) => {
+              const isSelected = orgPhase === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    setOrgPhase(option.value);
+                    setOrgPhaseError("");
+                  }}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    borderRadius: "10px",
+                    border: isSelected
+                      ? "2px solid #2D6A2F"
+                      : "1px solid #A8D4AA",
+                    backgroundColor: isSelected ? "#F0F7F0" : "#FFFFFF",
+                    padding: "14px",
+                    cursor: "pointer",
+                  }}
+                >
+                  <p
+                    style={{
+                      margin: "0 0 6px",
+                      color: "#2D6A2F",
+                      fontFamily: "Georgia, serif",
+                      fontWeight: 700,
+                      fontSize: "1rem",
+                    }}
+                  >
+                    {option.title}
+                  </p>
+                  <p
+                    style={{
+                      margin: 0,
+                      color: "#2C2C2C",
+                      fontFamily: "\"DM Sans\", system-ui, sans-serif",
+                      fontSize: "0.9rem",
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    {option.description}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+          {orgPhaseError ? (
+            <p
+              style={{
+                margin: "-4px 0 12px",
+                color: "#B42318",
+                fontFamily: "\"DM Sans\", system-ui, sans-serif",
+                fontSize: "0.9rem",
+                textAlign: "left",
+              }}
+            >
+              {orgPhaseError}
+            </p>
+          ) : null}
 
           <button
             type="submit"

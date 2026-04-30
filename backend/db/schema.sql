@@ -35,6 +35,7 @@ create table if not exists public.organizations (
   slug text unique,
   tier text not null default 'freemium' check (tier in ('freemium', 'starter', 'growth', 'enterprise')),
   org_type text,
+  org_phase text,
   budget_range text,
   primary_geography text,
   zip_codes text[],
@@ -687,3 +688,4 @@ create index if not exists funding_opportunities_active_type_idx on public.fundi
 -- If org_profiles already existed without mission-draft columns, run once:
 alter table public.org_profiles add column if not exists draft_mission_statement text;
 alter table public.org_profiles add column if not exists claude_mission_flags jsonb not null default '[]'::jsonb;
+alter table public.organizations add column if not exists org_phase text;

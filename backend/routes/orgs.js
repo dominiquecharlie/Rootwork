@@ -78,6 +78,7 @@ router.post("/create", async (req, res) => {
     const name = body.name;
     const orgType = body.org_type ?? body.orgType;
     const primaryGeography = body.primary_geography ?? body.primaryGeography;
+    const orgPhase = body.org_phase ?? body.orgPhase;
 
     if (!name || !orgType || !primaryGeography) {
       return res.status(400).json({
@@ -92,6 +93,7 @@ router.post("/create", async (req, res) => {
         name,
         org_type: orgType,
         primary_geography: primaryGeography,
+        org_phase: orgPhase ?? null,
         tier: "freemium",
       })
       .select("*")

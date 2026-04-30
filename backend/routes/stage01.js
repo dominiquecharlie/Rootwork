@@ -28,6 +28,26 @@ async function getAuthenticatedUser(req, res) {
   return user;
 }
 
+async function getOrgIdForUser(userId) {
+  const { data: membership, error: membershipError } = await supabase
+    .from("org_members")
+    .select("org_id")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (membershipError) {
+    return { error: membershipError.message };
+  }
+
+  if (!membership) {
+    return { error: "No organization membership found." };
+  }
+
+  return { orgId: membership.org_id };
+}
+
 router.post("/mission-draft", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req, res);
@@ -45,23 +65,10 @@ router.post("/mission-draft", async (req, res) => {
       });
     }
 
-    const { data: membership, error: membershipError } = await supabase
-      .from("org_members")
-      .select("org_id")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (membershipError) {
-      return res.status(400).json({ error: membershipError.message });
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
     }
-
-    if (!membership) {
-      return res.status(400).json({ error: "No organization membership found." });
-    }
-
-    const orgId = membership.org_id;
 
     const { error: upsertInputsError } = await supabase.from("org_profiles").upsert(
       {
@@ -118,6 +125,129 @@ router.post("/mission-draft", async (req, res) => {
       claude_mission_flags: claudeMissionFlags,
       parse_error: Boolean(agentResult.parse_error),
     });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+router.get("/stakeholders", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const { data, error } = await supabase
+      .from("stakeholders")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    return res.status(200).json({ stakeholders: data || [] });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+router.post("/stakeholders", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const body = req.body || {};
+    const name = body.name;
+    const stakeholderType = body.stakeholder_type;
+    const relationshipToProgram = body.relationship_to_program;
+    const inDecisionMakingRole =
+      body.in_decision_making_role ?? body.is_decision_maker ?? false;
+    const notes = body.notes ?? null;
+
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: "Missing required field: name." });
+    }
+
+    const { data, error } = await supabase
+      .from("stakeholders")
+      .insert({
+        org_id: orgId,
+        name: String(name).trim(),
+        stakeholder_type: stakeholderType ?? null,
+        relationship_to_program: relationshipToProgram ?? null,
+        in_decision_making_role: Boolean(inDecisionMakingRole),
+        notes,
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    return res.status(201).json({ stakeholder: data });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+router.delete("/stakeholders/:id", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const stakeholderId = req.params.id;
+    if (!stakeholderId) {
+      return res.status(400).json({ error: "Missing stakeholder id." });
+    }
+
+    const { data: existing, error: existingError } = await supabase
+      .from("stakeholders")
+      .select("id, org_id")
+      .eq("id", stakeholderId)
+      .maybeSingle();
+
+    if (existingError) {
+      return res.status(400).json({ error: existingError.message });
+    }
+
+    if (!existing) {
+      return res.status(404).json({ error: "Stakeholder not found." });
+    }
+
+    if (existing.org_id !== orgId) {
+      return res.status(403).json({ error: "Not allowed to delete this stakeholder." });
+    }
+
+    const { error: deleteError } = await supabase
+      .from("stakeholders")
+      .delete()
+      .eq("id", stakeholderId)
+      .eq("org_id", orgId);
+
+    if (deleteError) {
+      return res.status(400).json({ error: deleteError.message });
+    }
+
+    return res.status(200).json({ success: true });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message || "Server error." });

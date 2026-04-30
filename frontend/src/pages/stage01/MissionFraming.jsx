@@ -70,6 +70,8 @@ function MissionFraming() {
   const [flags, setFlags] = useState([]);
   const [parseError, setParseError] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
+  const [selectedOptionByFlag, setSelectedOptionByFlag] = useState({});
+  const [isDraftUpdated, setIsDraftUpdated] = useState(false);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -134,13 +136,89 @@ function MissionFraming() {
 
     setDraftEdit(statement);
     setFlags(Array.isArray(payload.flags) ? payload.flags : []);
+    setSelectedOptionByFlag({});
+    setIsDraftUpdated(false);
     setParseError(Boolean(payload.parse_error));
     setDraftLoaded(true);
     setIsSubmitting(false);
   }
 
   function handleSaveAndContinue() {
-    navigate("/dashboard");
+    navigate("/stage01/stakeholders");
+  }
+
+  if (isSubmitting) {
+    return (
+      <main
+        style={{
+          minHeight: "100vh",
+          backgroundColor: "#FAF9F7",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "24px",
+        }}
+      >
+        <style>
+          {`
+            @keyframes missionPulse {
+              0% { transform: scale(1); opacity: 1; }
+              50% { transform: scale(1.12); opacity: 0.65; }
+              100% { transform: scale(1); opacity: 1; }
+            }
+          `}
+        </style>
+        <section
+          style={{
+            width: "100%",
+            maxWidth: "680px",
+            textAlign: "center",
+            border: "1px solid #A8D4AA",
+            borderRadius: "12px",
+            backgroundColor: "#FAF9F7",
+            padding: "32px 28px",
+            boxSizing: "border-box",
+          }}
+        >
+          <h1
+            style={{
+              margin: "0 0 12px",
+              color: "#2D6A2F",
+              fontFamily: "Georgia, serif",
+              fontWeight: 700,
+              fontSize: "1.8rem",
+            }}
+          >
+            Growing your mission statement...
+          </h1>
+          <p
+            style={{
+              margin: "0 auto 18px",
+              maxWidth: "620px",
+              color: "#6B7280",
+              fontFamily: '"DM Sans", system-ui, sans-serif',
+              fontSize: "0.95rem",
+              lineHeight: 1.6,
+            }}
+          >
+            This usually takes a few seconds. Claude will surface a draft and
+            some things to consider — remember, you're the expert here. Review
+            everything before moving on.
+          </p>
+          <div
+            aria-hidden="true"
+            style={{
+              width: "1.5rem",
+              height: "1.5rem",
+              borderRadius: "999px",
+              backgroundColor: "#2D6A2F",
+              margin: "0 auto",
+              animation: "missionPulse 1.2s ease-in-out infinite",
+            }}
+          />
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -187,15 +265,32 @@ function MissionFraming() {
           Center the people your program affects, not the institution.
         </p>
 
-        <form onSubmit={handleSubmit}>
+        {!draftLoaded ? (
+          <form onSubmit={handleSubmit}>
           <div style={fieldStyle}>
             <label htmlFor="whoIsMostAffected" style={labelStyle}>
               Who is most affected by your program?
             </label>
-            <p style={promptStyle}>
-              Name the communities or groups whose lives or conditions your work
-              is meant to change. Be specific — geography alone is not enough.
-            </p>
+            <ul
+              style={{
+                ...promptStyle,
+                paddingLeft: "20px",
+                margin: "0 0 10px",
+              }}
+            >
+              <li>
+                Think about the people closest to the problem, not the
+                organization delivering the service
+              </li>
+              <li>
+                Be specific — name the community, demographic, or group rather
+                than saying "the community"
+              </li>
+              <li>
+                Example: "Latinas over 50 in East Austin who are uninsured and
+                managing chronic illness"
+              </li>
+            </ul>
             <textarea
               id="whoIsMostAffected"
               name="whoIsMostAffected"
@@ -210,10 +305,27 @@ function MissionFraming() {
             <label htmlFor="definitionOfSuccess" style={labelStyle}>
               What does success look like for them?
             </label>
-            <p style={promptStyle}>
-              Describe outcomes from their perspective — what would be different
-              in their daily lives if your program succeeded?
-            </p>
+            <ul
+              style={{
+                ...promptStyle,
+                paddingLeft: "20px",
+                margin: "0 0 10px",
+              }}
+            >
+              <li>
+                Describe change from their perspective, not the organization's
+                outputs
+              </li>
+              <li>
+                What would be different in their lives, not how many people you
+                served
+              </li>
+              <li>
+                Example: "Participants feel confident managing their health,
+                have a primary care provider, and report reduced stress around
+                medical costs"
+              </li>
+            </ul>
             <textarea
               id="definitionOfSuccess"
               name="definitionOfSuccess"
@@ -228,20 +340,28 @@ function MissionFraming() {
             <label htmlFor="theoryOfChange" style={labelStyle}>
               What is your theory of change?
             </label>
-            <p
+            <ul
               style={{
                 margin: "0 0 10px",
                 color: "#6B7280",
                 fontFamily: '"DM Sans", system-ui, sans-serif',
                 fontSize: "0.82rem",
                 lineHeight: 1.45,
+                paddingLeft: "20px",
               }}
             >
-              A theory of change explains how your work creates impact. Try
-              using this format: If we [do this activity], then [this group]
-              will [experience this change], which will lead to [this larger
-              outcome].
-            </p>
+              <li>A theory of change explains how your work creates impact</li>
+              <li>
+                Use this format: If we [do this activity], then [this group]
+                will [experience this change], which will lead to [this larger
+                outcome]
+              </li>
+              <li>
+                Example: "If we provide weekly financial coaching to single
+                mothers, then participants will build emergency savings, which
+                will lead to greater financial stability for their families"
+              </li>
+            </ul>
             <textarea
               id="theoryOfChange"
               name="theoryOfChange"
@@ -270,151 +390,241 @@ function MissionFraming() {
           >
             {isSubmitting ? "Generating draft…" : "Generate mission draft"}
           </button>
-        </form>
+          </form>
+        ) : null}
 
         {draftLoaded ? (
-          <div style={{ marginTop: "28px", textAlign: "left" }}>
+          <div style={{ textAlign: "left" }}>
             <div
               style={{
-                border: "1px solid #A8D4AA",
-                borderRadius: "12px",
-                padding: "20px",
-                backgroundColor: "#FFFFFF",
-                marginBottom: "24px",
+                display: "flex",
+                gap: "24px",
+                alignItems: "flex-start",
+                maxWidth: "1100px",
+                margin: "28px auto 0",
+                flexWrap: "wrap",
               }}
             >
-              <DraftLabel />
-              <p
-                style={{
-                  margin: "0 0 16px",
-                  color: "#2C2C2C",
-                  fontFamily: "Georgia, serif",
-                  fontSize: "1.05rem",
-                  lineHeight: 1.55,
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {draftEdit.trim() ? draftEdit : "—"}
-              </p>
-              <label
-                htmlFor="draftMissionEdit"
-                style={{
-                  display: "block",
-                  marginBottom: "8px",
-                  color: "#2D6A2F",
-                  fontFamily: '"DM Sans", system-ui, sans-serif',
-                  fontWeight: 600,
-                  fontSize: "0.85rem",
-                }}
-              >
-                Edit your mission statement
-              </label>
-              <textarea
-                id="draftMissionEdit"
-                name="draftMissionEdit"
-                value={draftEdit}
-                onChange={(e) => setDraftEdit(e.target.value)}
-                style={{
-                  ...textareaStyle,
-                  minHeight: "140px",
-                  lineHeight: 1.55,
-                  fontSize: "1rem",
-                }}
-              />
-              {parseError ? (
-                <p
+              <div style={{ flex: 1, minWidth: "300px", position: "sticky", top: "24px" }}>
+                <div
                   style={{
-                    margin: "10px 0 0",
-                    color: "#B45309",
-                    fontFamily: '"DM Sans", system-ui, sans-serif',
-                    fontSize: "0.85rem",
+                    border: "1px solid #A8D4AA",
+                    borderRadius: "12px",
+                    padding: "20px",
+                    backgroundColor: "#FFFFFF",
+                    marginBottom: "24px",
                   }}
                 >
-                  The model response was not valid JSON; the text above is shown
-                  raw. You can edit it into your final mission statement.
-                </p>
-              ) : null}
-            </div>
-
-            {flags.length > 0 ? (
-              <div style={{ marginBottom: "24px" }}>
-                <h2
-                  style={{
-                    margin: "0 0 14px",
-                    color: "#2D6A2F",
-                    fontFamily: "Georgia, serif",
-                    fontWeight: 700,
-                    fontSize: "1.15rem",
-                  }}
-                >
-                  Things to consider
-                </h2>
-                <ul
-                  style={{
-                    listStyle: "none",
-                    margin: 0,
-                    padding: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "12px",
-                  }}
-                >
-                  {flags.map((flag, index) => (
-                    <li
-                      key={index}
+                  <DraftLabel />
+                  <p
+                    style={{
+                      margin: "0 0 16px",
+                      color: isDraftUpdated ? "#2D6A2F" : "#2C2C2C",
+                      fontFamily: "Georgia, serif",
+                      fontSize: "1.05rem",
+                      lineHeight: 1.55,
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {draftEdit.trim() ? draftEdit : "—"}
+                  </p>
+                  <label
+                    htmlFor="draftMissionEdit"
+                    style={{
+                      display: "block",
+                      marginBottom: "8px",
+                      color: "#2D6A2F",
+                      fontFamily: '"DM Sans", system-ui, sans-serif',
+                      fontWeight: 600,
+                      fontSize: "0.85rem",
+                    }}
+                  >
+                    Edit your mission statement
+                  </label>
+                  <textarea
+                    id="draftMissionEdit"
+                    name="draftMissionEdit"
+                    value={draftEdit}
+                    onChange={(e) => {
+                      setDraftEdit(e.target.value);
+                      setIsDraftUpdated(false);
+                    }}
+                    style={{
+                      ...textareaStyle,
+                      minHeight: "140px",
+                      lineHeight: 1.55,
+                      fontSize: "1rem",
+                    }}
+                  />
+                  {parseError ? (
+                    <p
                       style={{
-                        border: "2px solid #F59E0B",
-                        borderRadius: "10px",
-                        padding: "14px 16px",
-                        backgroundColor: "#FFFBEB",
-                        textAlign: "left",
+                        margin: "10px 0 0",
+                        color: "#B45309",
+                        fontFamily: '"DM Sans", system-ui, sans-serif',
+                        fontSize: "0.85rem",
                       }}
                     >
-                      {flag.type ? (
-                        <p
+                      The model response was not valid JSON; the text above is shown
+                      raw. You can edit it into your final mission statement.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+              <div style={{ flex: 1, minWidth: "300px" }}>
+                {flags.length > 0 ? (
+                  <div style={{ marginBottom: "24px" }}>
+                    <h2
+                      style={{
+                        margin: "0 0 14px",
+                        color: "#2D6A2F",
+                        fontFamily: "Georgia, serif",
+                        fontWeight: 700,
+                        fontSize: "1.15rem",
+                      }}
+                    >
+                      Things to consider
+                    </h2>
+                    <ul
+                      style={{
+                        listStyle: "none",
+                        margin: 0,
+                        padding: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "12px",
+                      }}
+                    >
+                      {flags.map((flag, index) => (
+                        <li
+                          key={index}
                           style={{
-                            margin: "0 0 8px",
-                            fontFamily: '"DM Sans", system-ui, sans-serif',
-                            fontSize: "0.72rem",
-                            fontWeight: 700,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.04em",
-                            color: "#B45309",
+                            border: "2px solid #F59E0B",
+                            borderRadius: "10px",
+                            padding: "14px 16px",
+                            backgroundColor: "#FFFBEB",
+                            textAlign: "left",
                           }}
                         >
-                          {String(flag.type).replace(/_/g, " ")}
-                        </p>
-                      ) : null}
-                      <p
-                        style={{
-                          margin: "0 0 8px",
-                          color: "#78350F",
-                          fontFamily: "Georgia, serif",
-                          fontSize: "0.95rem",
-                          fontStyle: "italic",
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        {flag.excerpt || "—"}
-                      </p>
-                      <p
-                        style={{
-                          margin: 0,
-                          color: "#2C2C2C",
-                          fontFamily: '"DM Sans", system-ui, sans-serif',
-                          fontSize: "0.9rem",
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        <span style={{ fontWeight: 600 }}>Suggestion: </span>
-                        {flag.suggestion || "—"}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+                          {flag.type ? (
+                            <p
+                              style={{
+                                margin: "0 0 8px",
+                                fontFamily: '"DM Sans", system-ui, sans-serif',
+                                fontSize: "0.72rem",
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                letterSpacing: "0.04em",
+                                color: "#B45309",
+                              }}
+                            >
+                              {String(flag.type).replace(/_/g, " ")}
+                            </p>
+                          ) : null}
+                          <p
+                            style={{
+                              margin: "0 0 8px",
+                              color: "#78350F",
+                              fontFamily: "Georgia, serif",
+                              fontSize: "0.95rem",
+                              fontStyle: "italic",
+                              lineHeight: 1.45,
+                            }}
+                          >
+                            {flag.excerpt || "—"}
+                          </p>
+                          <p
+                            style={{
+                              margin: "0 0 10px",
+                              color: "#2C2C2C",
+                              fontFamily: '"DM Sans", system-ui, sans-serif',
+                              fontSize: "0.9rem",
+                              lineHeight: 1.5,
+                            }}
+                          >
+                            <span style={{ fontWeight: 600 }}>Suggestion: </span>
+                            {flag.suggestion || "—"}
+                          </p>
+                          {Array.isArray(flag.options) && flag.options.length > 0 ? (
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: "8px",
+                              }}
+                            >
+                              {flag.options.slice(0, 3).map((optionText, optionIndex) => {
+                                const isSelected =
+                                  selectedOptionByFlag[index] === optionIndex;
+                                return (
+                                  <button
+                                    key={`${index}-${optionIndex}`}
+                                    type="button"
+                                    onClick={() => {
+                                      const nextOptionText = optionText || "";
+                                      setDraftEdit((prevDraft) => {
+                                        const excerpt = flag.excerpt || "";
+                                        if (excerpt && prevDraft.includes(excerpt)) {
+                                          return prevDraft.replace(excerpt, nextOptionText);
+                                        }
 
+                                        if (!prevDraft.trim()) return nextOptionText;
+                                        if (!nextOptionText.trim()) return prevDraft;
+                                        return `${prevDraft} ${nextOptionText}`;
+                                      });
+                                      setIsDraftUpdated(true);
+                                      setSelectedOptionByFlag((prev) => ({
+                                        ...prev,
+                                        [index]: optionIndex,
+                                      }));
+                                    }}
+                                    title={optionText || ""}
+                                    style={{
+                                      width: "100%",
+                                      textAlign: "left",
+                                      borderRadius: "8px",
+                                      border: isSelected
+                                        ? "2px solid #2D6A2F"
+                                        : "1px solid #2D6A2F",
+                                      backgroundColor: isSelected ? "#ECFDF3" : "#FFFFFF",
+                                      color: "#2C2C2C",
+                                      padding: "10px 12px",
+                                      cursor: "pointer",
+                                      fontFamily: '"DM Sans", system-ui, sans-serif',
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        display: "block",
+                                        fontWeight: 700,
+                                        color: "#2D6A2F",
+                                        marginBottom: "4px",
+                                      }}
+                                    >
+                                      Option {optionIndex + 1}
+                                    </span>
+                                    <span
+                                      style={{
+                                        display: "block",
+                                        fontSize: "0.88rem",
+                                        lineHeight: 1.45,
+                                        whiteSpace: "pre-wrap",
+                                      }}
+                                    >
+                                      {optionText || "—"}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            </div>
             <button
               type="button"
               onClick={handleSaveAndContinue}
