@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 
 function NewOrg() {
+  const navigate = useNavigate();
   const [orgName, setOrgName] = useState("");
   const [orgType, setOrgType] = useState("nonprofit");
   const [primaryGeography, setPrimaryGeography] = useState("");
@@ -25,7 +27,10 @@ function NewOrg() {
       return;
     }
 
-    const response = await fetch("/api/orgs/create", {
+    const apiBaseUrl =
+      import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+
+    const response = await fetch(`${apiBaseUrl}/api/orgs/create`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -39,7 +44,17 @@ function NewOrg() {
     });
 
     if (!response.ok) {
-      setError("Could not create organization. Please try again.");
+      let backendError = "Could not create organization. Please try again.";
+      try {
+        const errorPayload = await response.json();
+        if (errorPayload?.error) {
+          backendError = errorPayload.error;
+        }
+      } catch (_error) {
+        // Ignore JSON parse errors and keep fallback message.
+      }
+
+      setError(backendError);
       setIsSubmitting(false);
       return;
     }
@@ -49,6 +64,10 @@ function NewOrg() {
     setOrgType("nonprofit");
     setPrimaryGeography("");
     setIsSubmitting(false);
+
+    setTimeout(() => {
+      navigate("/dashboard", { replace: true });
+    }, 400);
   }
 
   const fieldLabelStyle = {

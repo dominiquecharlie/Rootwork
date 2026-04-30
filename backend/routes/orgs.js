@@ -116,13 +116,13 @@ router.post("/create", async (req, res) => {
 
     const stageRows = [
       { org_id: createdOrg.id, stage: "01", status: "in_progress" },
-      { org_id: createdOrg.id, stage: "02_sow", status: "not_started" },
-      { org_id: createdOrg.id, stage: "02_templates", status: "not_started" },
-      { org_id: createdOrg.id, stage: "02_hardstop", status: "not_started" },
-      { org_id: createdOrg.id, stage: "02b", status: "not_started" },
-      { org_id: createdOrg.id, stage: "03", status: "not_started" },
-      { org_id: createdOrg.id, stage: "04", status: "not_started" },
-      { org_id: createdOrg.id, stage: "05", status: "not_started" },
+      { org_id: createdOrg.id, stage: "02_sow", status: "locked" },
+      { org_id: createdOrg.id, stage: "02_templates", status: "locked" },
+      { org_id: createdOrg.id, stage: "02_hardstop", status: "locked" },
+      { org_id: createdOrg.id, stage: "02b", status: "locked" },
+      { org_id: createdOrg.id, stage: "03", status: "locked" },
+      { org_id: createdOrg.id, stage: "04", status: "locked" },
+      { org_id: createdOrg.id, stage: "05", status: "locked" },
     ];
 
     const { error: stageInsertError } = await supabase

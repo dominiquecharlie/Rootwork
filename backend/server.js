@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const orgsRouter = require("./routes/orgs");
+const devRouter = require("./routes/dev");
 
 const app = express();
 
@@ -12,5 +13,9 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/orgs", orgsRouter);
+
+if (process.env.NODE_ENV !== "production") {
+  app.use("/api/dev", devRouter);
+}
 
 module.exports = app;

@@ -6,12 +6,37 @@ function Login() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [devMagicLink, setDevMagicLink] = useState("");
 
   async function handleSubmit(event) {
     event.preventDefault();
     setIsSubmitting(true);
     setError("");
     setMessage("");
+    setDevMagicLink("");
+
+    if (import.meta.env.DEV) {
+      const response = await fetch("http://localhost:4000/api/dev/magic-link", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        setError(payload?.error || "Could not generate magic link.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      setMessage("Dev magic link generated. Open the link below.");
+      setDevMagicLink(payload?.action_link || "");
+      setIsSubmitting(false);
+      return;
+    }
 
     const { error: signInError } = await supabase.auth.signInWithOtp({
       email,
@@ -134,6 +159,20 @@ function Login() {
             }}
           >
             {message}
+          </p>
+        ) : null}
+
+        {devMagicLink ? (
+          <p
+            style={{
+              marginTop: "10px",
+              fontFamily: "\"DM Sans\", system-ui, sans-serif",
+              wordBreak: "break-all",
+            }}
+          >
+            <a href={devMagicLink} style={{ color: "#2D6A2F" }}>
+              Open magic link
+            </a>
           </p>
         ) : null}
 

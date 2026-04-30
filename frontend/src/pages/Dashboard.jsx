@@ -21,37 +21,44 @@ function Dashboard() {
 
   useEffect(() => {
     async function loadOrgData() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
 
-      if (!session?.access_token) {
-        navigate("/login", { replace: true });
-        return;
-      }
+        if (!session?.access_token) {
+          navigate("/login", { replace: true });
+          return;
+        }
 
-      const response = await fetch("/api/orgs/me", {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-      });
+        const apiBaseUrl =
+          import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 
-      if (!response.ok) {
+        const response = await fetch(`${apiBaseUrl}/api/orgs/me`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (!response.ok) {
+          navigate("/onboarding", { replace: true });
+          return;
+        }
+
+        const payload = await response.json();
+
+        if (!payload?.org) {
+          navigate("/onboarding", { replace: true });
+          return;
+        }
+
+        setOrg(payload.org);
+        setStageProgress(payload.stageProgress || payload.stage_progress || []);
+        setIsLoading(false);
+      } catch (_error) {
         navigate("/onboarding", { replace: true });
-        return;
       }
-
-      const payload = await response.json();
-
-      if (!payload?.org) {
-        navigate("/onboarding", { replace: true });
-        return;
-      }
-
-      setOrg(payload.org);
-      setStageProgress(payload.stageProgress || payload.stage_progress || []);
-      setIsLoading(false);
     }
 
     loadOrgData();
@@ -155,7 +162,7 @@ function Dashboard() {
                     fontSize: "1.1rem",
                   }}
                 >
-                  {stage.key} - {stage.label}
+                  {stage.label}
                 </h3>
                 <p
                   style={{
