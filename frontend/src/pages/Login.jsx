@@ -46,7 +46,7 @@ function Login() {
         style={{
           width: "100%",
           maxWidth: "440px",
-          backgroundColor: "#FFFFFF",
+          backgroundColor: "#FAF9F7",
           border: "1px solid #A8D4AA",
           borderRadius: "12px",
           padding: "28px",

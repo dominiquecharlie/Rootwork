@@ -3,6 +3,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import AuthCallback from "./pages/AuthCallback";
 import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
+import NewOrg from "./pages/NewOrg";
 
 function App() {
   return (
@@ -14,6 +15,14 @@ function App() {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/onboarding"
+        element={
+          <ProtectedRoute>
+            <NewOrg />
           </ProtectedRoute>
         }
       />

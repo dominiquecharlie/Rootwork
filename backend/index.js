@@ -1,18 +1,11 @@
-const express = require("express");
-const cors = require("cors");
 const dotenv = require("dotenv");
+const path = require("path");
 
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-const app = express();
+const app = require("./server");
+
 const port = process.env.PORT || 4000;
-
-app.use(cors());
-app.use(express.json());
-
-app.get("/health", (_req, res) => {
-  res.json({ ok: true, service: "backend" });
-});
 
 app.listen(port, () => {
   console.log(`Backend listening on port ${port}`);
