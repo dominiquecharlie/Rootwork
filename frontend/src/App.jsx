@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./pages/Login";
 import NewOrg from "./pages/NewOrg";
 import MissionFraming from "./pages/stage01/MissionFraming";
+import StakeholderEducation from "./pages/stage01/StakeholderEducation";
 import StakeholderMap from "./pages/stage01/StakeholderMap";
 
 function App() {
@@ -33,6 +34,14 @@ function App() {
         element={
           <ProtectedRoute>
             <MissionFraming />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage01/stakeholders/intro"
+        element={
+          <ProtectedRoute>
+            <StakeholderEducation />
           </ProtectedRoute>
         }
       />

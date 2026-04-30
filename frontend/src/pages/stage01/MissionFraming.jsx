@@ -71,7 +71,7 @@ function MissionFraming() {
   const [parseError, setParseError] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [selectedOptionByFlag, setSelectedOptionByFlag] = useState({});
-  const [isDraftUpdated, setIsDraftUpdated] = useState(false);
+  const [lastInsertedText, setLastInsertedText] = useState("");
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -137,14 +137,14 @@ function MissionFraming() {
     setDraftEdit(statement);
     setFlags(Array.isArray(payload.flags) ? payload.flags : []);
     setSelectedOptionByFlag({});
-    setIsDraftUpdated(false);
+    setLastInsertedText("");
     setParseError(Boolean(payload.parse_error));
     setDraftLoaded(true);
     setIsSubmitting(false);
   }
 
   function handleSaveAndContinue() {
-    navigate("/stage01/stakeholders");
+    navigate("/stage01/stakeholders/intro");
   }
 
   if (isSubmitting) {
@@ -220,6 +220,24 @@ function MissionFraming() {
       </main>
     );
   }
+
+  const draftHighlightIndex =
+    lastInsertedText && draftEdit
+      ? draftEdit.indexOf(lastInsertedText)
+      : -1;
+  const draftBeforeInsert =
+    draftHighlightIndex >= 0 ? draftEdit.slice(0, draftHighlightIndex) : draftEdit;
+  const draftInsertedSegment =
+    draftHighlightIndex >= 0
+      ? draftEdit.slice(
+          draftHighlightIndex,
+          draftHighlightIndex + lastInsertedText.length
+        )
+      : "";
+  const draftAfterInsert =
+    draftHighlightIndex >= 0
+      ? draftEdit.slice(draftHighlightIndex + lastInsertedText.length)
+      : "";
 
   return (
     <main
@@ -419,14 +437,28 @@ function MissionFraming() {
                   <p
                     style={{
                       margin: "0 0 16px",
-                      color: isDraftUpdated ? "#2D6A2F" : "#2C2C2C",
+                      color: "#2C2C2C",
                       fontFamily: "Georgia, serif",
                       fontSize: "1.05rem",
                       lineHeight: 1.55,
                       whiteSpace: "pre-wrap",
                     }}
                   >
-                    {draftEdit.trim() ? draftEdit : "—"}
+                    {draftEdit.trim() ? (
+                      draftHighlightIndex >= 0 ? (
+                        <>
+                          {draftBeforeInsert}
+                          <span style={{ color: "#2D6A2F", fontWeight: 600 }}>
+                            {draftInsertedSegment}
+                          </span>
+                          {draftAfterInsert}
+                        </>
+                      ) : (
+                        draftEdit
+                      )
+                    ) : (
+                      "—"
+                    )}
                   </p>
                   <label
                     htmlFor="draftMissionEdit"
@@ -447,7 +479,7 @@ function MissionFraming() {
                     value={draftEdit}
                     onChange={(e) => {
                       setDraftEdit(e.target.value);
-                      setIsDraftUpdated(false);
+                      setLastInsertedText("");
                     }}
                     style={{
                       ...textareaStyle,
@@ -572,7 +604,7 @@ function MissionFraming() {
                                         if (!nextOptionText.trim()) return prevDraft;
                                         return `${prevDraft} ${nextOptionText}`;
                                       });
-                                      setIsDraftUpdated(true);
+                                      setLastInsertedText(nextOptionText);
                                       setSelectedOptionByFlag((prev) => ({
                                         ...prev,
                                         [index]: optionIndex,
