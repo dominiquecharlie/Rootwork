@@ -85,7 +85,7 @@ function Dashboard() {
   function normalizeStatus(rawStatus) {
     if (rawStatus === "in_progress") return "in_progress";
     if (rawStatus === "completed" || rawStatus === "complete") return "complete";
-    return "not_started";
+    return "locked";
   }
 
   function statusBorderColor(status) {
@@ -164,16 +164,6 @@ function Dashboard() {
                 >
                   {stage.label}
                 </h3>
-                <p
-                  style={{
-                    margin: "6px 0 0",
-                    color: "#2C2C2C",
-                    fontFamily: "\"DM Sans\", system-ui, sans-serif",
-                    fontSize: "0.95rem",
-                  }}
-                >
-                  {status}
-                </p>
               </article>
             );
           })}
