@@ -353,11 +353,20 @@ create table if not exists public.community_engagements (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
   title text,
+  engagement_template_id uuid references public.engagement_templates(id) on delete set null,
+  template_display_label text,
+  participant_count integer,
   engagement_context text,
   occurred_at timestamptz,
   who_was_present text,
   who_was_absent text,
   why_absent text,
+  community_members_wanted text,
+  concerns_raised text,
+  priorities_named text,
+  primary_language_in_community boolean,
+  primary_language_barrier text,
+  accessibility_notes text,
   notes text,
   created_by uuid references auth.users(id),
   created_at timestamptz not null default now(),
@@ -718,6 +727,17 @@ alter table public.stage_progress add constraint stage_progress_stage_check chec
     '05'
   )
 );
+
+alter table public.community_engagements
+  add column if not exists engagement_template_id uuid references public.engagement_templates(id) on delete set null;
+alter table public.community_engagements add column if not exists template_display_label text;
+alter table public.community_engagements add column if not exists participant_count integer;
+alter table public.community_engagements add column if not exists community_members_wanted text;
+alter table public.community_engagements add column if not exists concerns_raised text;
+alter table public.community_engagements add column if not exists priorities_named text;
+alter table public.community_engagements add column if not exists primary_language_in_community boolean;
+alter table public.community_engagements add column if not exists primary_language_barrier text;
+alter table public.community_engagements add column if not exists accessibility_notes text;
 
 -- Stage 01 optional program documents (upload before program design)
 create table if not exists public.stage01_program_documents (

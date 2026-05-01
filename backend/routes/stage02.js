@@ -591,4 +591,438 @@ router.post("/generate-templates", async (req, res) => {
   }
 });
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TEMPLATE_OTHER = "__other__";
+
+function parseBooleanField(value) {
+  if (value === true || value === false) return value;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "true" || v === "1" || v === "yes") return true;
+    if (v === "false" || v === "0" || v === "no") return false;
+  }
+  return null;
+}
+
+router.post("/document-engagement", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const b = req.body || {};
+    const title = typeof b.title === "string" ? b.title.trim() : "";
+    const engagementDateRaw =
+      typeof b.engagement_date === "string" ? b.engagement_date.trim() : "";
+    const templateUsed =
+      b.template_used != null ? String(b.template_used).trim() : "";
+    const participantCountRaw = b.participant_count;
+    const whoPresent =
+      typeof b.who_was_present === "string" ? b.who_was_present.trim() : "";
+    const whoAbsent =
+      typeof b.who_was_absent === "string" ? b.who_was_absent.trim() : "";
+    const whyAbsent =
+      typeof b.why_absent === "string" ? b.why_absent.trim() : "";
+    const whatCommunitySaid =
+      typeof b.what_community_said === "string"
+        ? b.what_community_said.trim()
+        : "";
+    const concernsRaised =
+      typeof b.concerns_raised === "string"
+        ? b.concerns_raised.trim()
+        : "";
+    const prioritiesNamed =
+      typeof b.priorities_named === "string"
+        ? b.priorities_named.trim()
+        : "";
+    const conductedInPrimary = parseBooleanField(
+      b.conducted_in_primary_language
+    );
+    const languageNotes =
+      typeof b.language_notes === "string" ? b.language_notes.trim() : "";
+    const accessibilityNotes =
+      typeof b.accessibility_notes === "string"
+        ? b.accessibility_notes.trim()
+        : "";
+
+    if (!title) {
+      return res.status(400).json({ error: "Missing title." });
+    }
+    if (!engagementDateRaw) {
+      return res.status(400).json({ error: "Missing engagement_date." });
+    }
+    if (!templateUsed) {
+      return res.status(400).json({ error: "Missing template_used." });
+    }
+    const participantCount = Number(participantCountRaw);
+    if (
+      !Number.isFinite(participantCount) ||
+      !Number.isInteger(participantCount) ||
+      participantCount < 1
+    ) {
+      return res.status(400).json({
+        error: "participant_count must be an integer of at least 1.",
+      });
+    }
+    if (!whoPresent) {
+      return res.status(400).json({ error: "Missing who_was_present." });
+    }
+    if (!whoAbsent) {
+      return res.status(400).json({ error: "Missing who_was_absent." });
+    }
+    if (!whyAbsent) {
+      return res.status(400).json({ error: "Missing why_absent." });
+    }
+    if (!whatCommunitySaid) {
+      return res.status(400).json({ error: "Missing what_community_said." });
+    }
+    if (!prioritiesNamed) {
+      return res.status(400).json({ error: "Missing priorities_named." });
+    }
+    if (conductedInPrimary !== true && conductedInPrimary !== false) {
+      return res.status(400).json({
+        error: "Missing or invalid conducted_in_primary_language.",
+      });
+    }
+    if (conductedInPrimary === false && !languageNotes) {
+      return res.status(400).json({
+        error:
+          "language_notes is required when conducted_in_primary_language is false.",
+      });
+    }
+
+    const occurredAt = new Date(`${engagementDateRaw}T12:00:00.000Z`);
+    if (Number.isNaN(occurredAt.getTime())) {
+      return res.status(400).json({ error: "Invalid engagement_date." });
+    }
+
+    let engagementTemplateId = null;
+    let templateDisplayLabel = "";
+
+    if (templateUsed === TEMPLATE_OTHER) {
+      templateDisplayLabel = "Other or no template";
+    } else if (UUID_RE.test(templateUsed)) {
+      const { data: tpl, error: tplErr } = await supabase
+        .from("engagement_templates")
+        .select("id, org_id, template_type, template_name")
+        .eq("id", templateUsed)
+        .maybeSingle();
+      if (tplErr || !tpl || tpl.org_id !== orgId) {
+        return res.status(400).json({ error: "Template not found for this org." });
+      }
+      engagementTemplateId = tpl.id;
+      templateDisplayLabel = `${tpl.template_type}: ${tpl.template_name}`;
+    } else {
+      templateDisplayLabel = templateUsed;
+    }
+
+    const primaryBarrierStored = languageNotes || null;
+
+    const { data: row, error: insertErr } = await supabase
+      .from("community_engagements")
+      .insert({
+        org_id: orgId,
+        title,
+        engagement_template_id: engagementTemplateId,
+        template_display_label: templateDisplayLabel,
+        participant_count: participantCount,
+        occurred_at: occurredAt.toISOString(),
+        who_was_present: whoPresent,
+        who_was_absent: whoAbsent,
+        why_absent: whyAbsent,
+        community_members_wanted: whatCommunitySaid,
+        concerns_raised: concernsRaised || null,
+        priorities_named: prioritiesNamed,
+        primary_language_in_community: conductedInPrimary,
+        primary_language_barrier: primaryBarrierStored,
+        accessibility_notes: accessibilityNotes || null,
+        engagement_context: null,
+        notes: null,
+        created_by: user.id,
+      })
+      .select("*")
+      .single();
+
+    if (insertErr) {
+      return res.status(400).json({ error: insertErr.message });
+    }
+
+    const { error: progressError } = await supabase
+      .from("stage_progress")
+      .update({ status: "in_progress" })
+      .eq("org_id", orgId)
+      .eq("stage", "02_hardstop");
+
+    if (progressError) {
+      return res.status(400).json({ error: progressError.message });
+    }
+
+    return res.status(201).json({ engagement: row });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+router.get("/engagements", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const { data: rows, error: listError } = await supabase
+      .from("community_engagements")
+      .select("*")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false });
+
+    if (listError) {
+      return res.status(400).json({ error: listError.message });
+    }
+
+    return res.status(200).json({ engagements: rows || [] });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+router.get("/community-voice-records", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const engagementId =
+      req.query?.engagement_id != null
+        ? String(req.query.engagement_id).trim()
+        : "";
+    if (!engagementId) {
+      return res.status(400).json({ error: "Missing engagement_id query." });
+    }
+
+    const { data: engagement, error: engErr } = await supabase
+      .from("community_engagements")
+      .select("id, org_id")
+      .eq("id", engagementId)
+      .maybeSingle();
+
+    if (engErr || !engagement || engagement.org_id !== orgId) {
+      return res.status(400).json({ error: "Engagement not found." });
+    }
+
+    const { data: records, error: listError } = await supabase
+      .from("community_voice_records")
+      .select("*")
+      .eq("engagement_id", engagementId)
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: true });
+
+    if (listError) {
+      return res.status(400).json({ error: listError.message });
+    }
+
+    return res.status(200).json({ records: records || [] });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+router.post("/community-voice", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const b = req.body || {};
+    const engagementId =
+      typeof b.engagement_id === "string" ? b.engagement_id.trim() : "";
+    const voiceContent =
+      typeof b.voice_content === "string" ? b.voice_content.trim() : "";
+    const speakerRole =
+      typeof b.speaker_role === "string" ? b.speaker_role.trim() : "";
+    const engagementContext =
+      typeof b.engagement_context === "string"
+        ? b.engagement_context.trim()
+        : "";
+
+    if (!engagementId) {
+      return res.status(400).json({ error: "Missing engagement_id." });
+    }
+    if (!voiceContent) {
+      return res.status(400).json({ error: "Missing voice_content." });
+    }
+    if (!speakerRole) {
+      return res.status(400).json({ error: "Missing speaker_role." });
+    }
+
+    const { data: engagement, error: engErr } = await supabase
+      .from("community_engagements")
+      .select("id, org_id")
+      .eq("id", engagementId)
+      .maybeSingle();
+
+    if (engErr || !engagement || engagement.org_id !== orgId) {
+      return res.status(400).json({ error: "Engagement not found." });
+    }
+
+    const { data: row, error: insertErr } = await supabase
+      .from("community_voice_records")
+      .insert({
+        org_id: orgId,
+        engagement_id: engagementId,
+        voice_content: voiceContent,
+        speaker_role: speakerRole,
+        engagement_context: engagementContext || null,
+        created_by: user.id,
+      })
+      .select("*")
+      .single();
+
+    if (insertErr) {
+      return res.status(400).json({ error: insertErr.message });
+    }
+
+    return res.status(201).json({ record: row });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+router.delete("/community-voice-records/:id", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const recordId = req.params?.id != null ? String(req.params.id).trim() : "";
+    if (!recordId) {
+      return res.status(400).json({ error: "Missing record id." });
+    }
+
+    const { data: existing, error: findErr } = await supabase
+      .from("community_voice_records")
+      .select("id, org_id")
+      .eq("id", recordId)
+      .maybeSingle();
+
+    if (findErr || !existing || existing.org_id !== orgId) {
+      return res.status(400).json({ error: "Record not found." });
+    }
+
+    const { error: delErr } = await supabase
+      .from("community_voice_records")
+      .delete()
+      .eq("id", recordId)
+      .eq("org_id", orgId);
+
+    if (delErr) {
+      return res.status(400).json({ error: delErr.message });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+router.post("/complete-hardstop", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const { data: engagements, error: engListErr } = await supabase
+      .from("community_engagements")
+      .select("id")
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (engListErr) {
+      return res.status(400).json({ error: engListErr.message });
+    }
+
+    const latest = engagements?.[0];
+    if (!latest) {
+      return res.status(400).json({ error: "No community engagement on file." });
+    }
+
+    const { data: voiceRows, error: countErr } = await supabase
+      .from("community_voice_records")
+      .select("id")
+      .eq("org_id", orgId)
+      .eq("engagement_id", latest.id);
+
+    if (countErr) {
+      return res.status(400).json({ error: countErr.message });
+    }
+    if (!voiceRows || voiceRows.length < 1) {
+      return res.status(400).json({
+        error:
+          "Add at least one community voice record for your latest engagement before continuing.",
+      });
+    }
+
+    const completedAt = new Date().toISOString();
+
+    const { error: hardstopErr } = await supabase
+      .from("stage_progress")
+      .update({
+        status: "completed",
+        completed_at: completedAt,
+        completed_by: user.id,
+      })
+      .eq("org_id", orgId)
+      .eq("stage", "02_hardstop");
+
+    if (hardstopErr) {
+      return res.status(400).json({ error: hardstopErr.message });
+    }
+
+    const { error: reconcileErr } = await supabase
+      .from("stage_progress")
+      .update({ status: "in_progress" })
+      .eq("org_id", orgId)
+      .eq("stage", "02b");
+
+    if (reconcileErr) {
+      return res.status(400).json({ error: reconcileErr.message });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
 module.exports = router;

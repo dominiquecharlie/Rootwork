@@ -19,6 +19,8 @@ import SOWUpload from "./pages/stage02/SOWUpload";
 import MetricsReview from "./pages/stage02/MetricsReview";
 import EngagementTemplates from "./pages/stage02/EngagementTemplates";
 import DocumentEngagement from "./pages/stage02/DocumentEngagement";
+import CommunityVoice from "./pages/stage02/CommunityVoice";
+import Reconcile from "./pages/stage02b/Reconcile";
 
 function RootRoute() {
   const [isChecking, setIsChecking] = useState(true);
@@ -165,6 +167,22 @@ function App() {
         element={
           <ProtectedRoute>
             <DocumentEngagement />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage02/community-voice"
+        element={
+          <ProtectedRoute>
+            <CommunityVoice />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage02b/reconcile"
+        element={
+          <ProtectedRoute>
+            <Reconcile />
           </ProtectedRoute>
         }
       />
