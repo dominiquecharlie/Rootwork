@@ -15,6 +15,10 @@ import StakeholderEducation from "./pages/stage01/StakeholderEducation";
 import StakeholderGardenResults from "./pages/stage01/StakeholderGardenResults";
 import StakeholderMap from "./pages/stage01/StakeholderMap";
 import Stage02Intro from "./pages/stage02/Stage02Intro";
+import SOWUpload from "./pages/stage02/SOWUpload";
+import MetricsReview from "./pages/stage02/MetricsReview";
+import EngagementTemplates from "./pages/stage02/EngagementTemplates";
+import DocumentEngagement from "./pages/stage02/DocumentEngagement";
 
 function RootRoute() {
   const [isChecking, setIsChecking] = useState(true);
@@ -129,6 +133,38 @@ function App() {
         element={
           <ProtectedRoute>
             <Stage02Intro />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage02/sow"
+        element={
+          <ProtectedRoute>
+            <SOWUpload />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage02/metrics-review"
+        element={
+          <ProtectedRoute>
+            <MetricsReview />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage02/templates"
+        element={
+          <ProtectedRoute>
+            <EngagementTemplates />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage02/document-engagement"
+        element={
+          <ProtectedRoute>
+            <DocumentEngagement />
           </ProtectedRoute>
         }
       />

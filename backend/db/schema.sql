@@ -229,9 +229,10 @@ create trigger program_designs_set_updated_at
 create table if not exists public.sow_uploads (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
-  storage_path text not null,
-  original_filename text not null,
-  mime_type text,
+  file_name text not null,
+  file_path text not null,
+  file_type text,
+  upload_status text not null default 'pending',
   file_size_bytes bigint,
   uploaded_by uuid references auth.users(id),
   uploaded_at timestamptz not null default now(),
@@ -272,10 +273,11 @@ create table if not exists public.funder_metrics (
   org_id uuid not null references public.organizations(id) on delete cascade,
   sow_upload_id uuid references public.sow_uploads(id) on delete set null,
   metric_name text not null,
-  metric_definition text,
-  target_value numeric,
-  period text,
-  extracted_by text default 'agent04_sowExtraction',
+  metric_description text,
+  metric_type text,
+  reporting_frequency text,
+  funder_framework text,
+  source text not null default 'extracted',
   created_at timestamptz not null default now(),
   updated_at timestamptz
 );
@@ -553,7 +555,18 @@ create trigger collection_responses_set_updated_at
 create table if not exists public.stage_progress (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
-  stage text not null check (stage in ('01', '02', '02b', '03', '04', '05')),
+  stage text not null check (
+    stage in (
+      '01',
+      '02_sow',
+      '02_templates',
+      '02_hardstop',
+      '02b',
+      '03',
+      '04',
+      '05'
+    )
+  ),
   status text not null default 'locked' check (status in ('locked', 'in_progress', 'completed')),
   completed_at timestamptz,
   completed_by uuid references auth.users(id),
@@ -691,6 +704,20 @@ alter table public.org_profiles add column if not exists claude_mission_flags js
 alter table public.organizations add column if not exists org_phase text;
 
 alter table public.program_designs add column if not exists claude_alignment_flags jsonb not null default '{}'::jsonb;
+
+alter table public.stage_progress drop constraint if exists stage_progress_stage_check;
+alter table public.stage_progress add constraint stage_progress_stage_check check (
+  stage in (
+    '01',
+    '02_sow',
+    '02_templates',
+    '02_hardstop',
+    '02b',
+    '03',
+    '04',
+    '05'
+  )
+);
 
 -- Stage 01 optional program documents (upload before program design)
 create table if not exists public.stage01_program_documents (
