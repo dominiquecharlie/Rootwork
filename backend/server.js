@@ -3,6 +3,7 @@ const cors = require("cors");
 const orgsRouter = require("./routes/orgs");
 const stage01Router = require("./routes/stage01");
 const stage02Router = require("./routes/stage02");
+const stage02bRouter = require("./routes/stage02b");
 const devRouter = require("./routes/dev");
 
 const app = express();
@@ -17,6 +18,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/orgs", orgsRouter);
 app.use("/api/stage01", stage01Router);
 app.use("/api/stage02", stage02Router);
+app.use("/api/stage02b", stage02bRouter);
 
 if (process.env.NODE_ENV !== "production") {
   app.use("/api/dev", devRouter);

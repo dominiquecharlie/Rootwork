@@ -21,6 +21,7 @@ import EngagementTemplates from "./pages/stage02/EngagementTemplates";
 import DocumentEngagement from "./pages/stage02/DocumentEngagement";
 import CommunityVoice from "./pages/stage02/CommunityVoice";
 import Reconcile from "./pages/stage02b/Reconcile";
+import Collect from "./pages/stage03/Collect";
 
 function RootRoute() {
   const [isChecking, setIsChecking] = useState(true);
@@ -183,6 +184,14 @@ function App() {
         element={
           <ProtectedRoute>
             <Reconcile />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage03/collect"
+        element={
+          <ProtectedRoute>
+            <Collect />
           </ProtectedRoute>
         }
       />
