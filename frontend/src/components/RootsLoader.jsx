@@ -1,152 +1,140 @@
-import { useEffect, useRef } from "react";
-
 export default function RootsLoader() {
-  const canvasRef = useRef(null);
-
-  useEffect(() => {
-    const el = canvasRef.current;
-    if (!el) return undefined;
-    const ctx = el.getContext("2d");
-    if (!ctx) return undefined;
-
-    const W = 300;
-    const H = 200;
-    el.width = W;
-    el.height = H;
-
-    const roots = [
-      [
-        { x: 150, y: 100 },
-        { x: 136, y: 122 },
-        { x: 118, y: 148 },
-        { x: 92, y: 182 },
-      ],
-      [
-        { x: 150, y: 100 },
-        { x: 158, y: 118 },
-        { x: 172, y: 142 },
-        { x: 188, y: 172 },
-      ],
-      [
-        { x: 150, y: 100 },
-        { x: 148, y: 128 },
-        { x: 142, y: 156 },
-        { x: 128, y: 190 },
-      ],
-      [
-        { x: 150, y: 100 },
-        { x: 154, y: 112 },
-        { x: 168, y: 128 },
-        { x: 198, y: 152 },
-      ],
-      [
-        { x: 150, y: 100 },
-        { x: 140, y: 108 },
-        { x: 124, y: 124 },
-        { x: 108, y: 156 },
-      ],
-      [
-        { x: 150, y: 100 },
-        { x: 162, y: 108 },
-        { x: 182, y: 124 },
-        { x: 212, y: 158 },
-      ],
-    ];
-
-    let progress = 0;
-    let direction = 1;
-    let frame = 0;
-    let animId = 0;
-    let stopped = false;
-
-    function drawCubic(pts, t) {
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      const steps = Math.floor(t * 40);
-      for (let s = 1; s <= steps; s += 1) {
-        const u = s / 40;
-        const mt = 1 - u;
-        const x =
-          mt * mt * mt * pts[0].x +
-          3 * mt * mt * u * pts[1].x +
-          3 * mt * u * u * pts[2].x +
-          u * u * u * pts[3].x;
-        const y =
-          mt * mt * mt * pts[0].y +
-          3 * mt * mt * u * pts[1].y +
-          3 * mt * u * u * pts[2].y +
-          u * u * u * pts[3].y;
-        ctx.lineTo(x, y);
-      }
-      ctx.strokeStyle = "#2D6A2F";
-      ctx.lineWidth = 2;
-      ctx.lineCap = "round";
-      ctx.stroke();
-    }
-
-    function drawSeedling(f) {
-      const angle = Math.sin(f * 0.04) * 0.07;
-      ctx.save();
-      ctx.translate(150, 98);
-      ctx.rotate(angle);
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(0, -26);
-      ctx.strokeStyle = "#2D6A2F";
-      ctx.lineWidth = 3;
-      ctx.lineCap = "round";
-      ctx.stroke();
-      ctx.fillStyle = "#2D6A2F";
-      ctx.beginPath();
-      ctx.ellipse(-9, -33, 10, 5.5, -0.63, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(9, -33, 10, 5.5, 0.63, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-
-    function animate() {
-      if (stopped) return;
-      ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "rgba(139, 105, 20, 0.12)";
-      ctx.fillRect(0, 100, W, 100);
-      ctx.beginPath();
-      ctx.moveTo(0, 100);
-      ctx.lineTo(W, 100);
-      ctx.strokeStyle = "#7A6A45";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      progress += direction * 0.006;
-      if (progress >= 1) {
-        progress = 1;
-        direction = -1;
-      }
-      if (progress <= 0) {
-        progress = 0;
-        direction = 1;
-      }
-      roots.forEach((pts, i) => {
-        const delay = i * 0.12;
-        const t = Math.max(0, Math.min(1, (progress - delay) / (1 - delay)));
-        if (t > 0) drawCubic(pts, t);
-      });
-      drawSeedling(frame);
-      frame += 1;
-      animId = requestAnimationFrame(animate);
-    }
-
-    animate();
-    return () => {
-      stopped = true;
-      cancelAnimationFrame(animId);
-    };
-  }, []);
-
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ display: "block", margin: "0 auto", borderRadius: "8px" }}
-    />
+    <>
+      <style>{`
+        @keyframes rl-canopy-sway {
+          from { transform: rotate(-3deg); }
+          to { transform: rotate(3deg); }
+        }
+        @keyframes rl-root-grow {
+          from { stroke-dashoffset: 120; }
+          to { stroke-dashoffset: 0; }
+        }
+        .rl-canopy {
+          transform-box: fill-box;
+          transform-origin: 150px 180px;
+          animation: rl-canopy-sway 3s ease-in-out infinite alternate;
+        }
+        .rl-root {
+          fill: none;
+          stroke: #2D6A2F;
+          stroke-width: 2;
+          stroke-linecap: round;
+          stroke-dasharray: 120;
+          stroke-dashoffset: 120;
+          animation: rl-root-grow 1.5s ease-in-out infinite alternate;
+        }
+        .rl-root-1 { animation-delay: 0s; }
+        .rl-root-2 { animation-delay: 0.25s; }
+        .rl-root-3 { animation-delay: 0.5s; }
+        .rl-root-4 { animation-delay: 0.75s; }
+        .rl-root-5 { animation-delay: 1s; }
+        .rl-root-6 { animation-delay: 1.25s; }
+      `}</style>
+      <svg
+        width={300}
+        height={260}
+        viewBox="0 0 300 260"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden
+        style={{ display: "block", margin: "0 auto", borderRadius: "8px" }}
+      >
+        <rect x={0} y={0} width={300} height={180} fill="#FAF9F7" />
+        <rect
+          x={0}
+          y={180}
+          width={300}
+          height={80}
+          fill="rgba(139,105,20,0.10)"
+        />
+        <line
+          x1={0}
+          y1={180}
+          x2={300}
+          y2={180}
+          stroke="#7A6A45"
+          strokeWidth={1.5}
+        />
+
+        <path
+          className="rl-root rl-root-1"
+          d="M150,180 C135,200 115,220 88,248"
+        />
+        <path
+          className="rl-root rl-root-2"
+          d="M150,180 C160,195 175,215 195,242"
+        />
+        <path
+          className="rl-root rl-root-3"
+          d="M150,180 C148,205 140,228 125,255"
+        />
+        <path
+          className="rl-root rl-root-4"
+          d="M150,180 C155,198 168,215 200,238"
+        />
+        <path
+          className="rl-root rl-root-5"
+          d="M150,180 C138,195 120,210 100,235"
+        />
+        <path
+          className="rl-root rl-root-6"
+          d="M150,180 C163,195 183,210 215,238"
+        />
+
+        <path
+          d="M140,180 L160,180 L154,110 L146,110 Z"
+          fill="#5C3D1E"
+        />
+
+        <path
+          d="M150,110 C128,95 102,78 78,58"
+          fill="none"
+          stroke="#5C3D1E"
+          strokeWidth={5}
+          strokeLinecap="round"
+        />
+        <path
+          d="M150,110 C172,95 198,78 222,58"
+          fill="none"
+          stroke="#5C3D1E"
+          strokeWidth={5}
+          strokeLinecap="round"
+        />
+        <path
+          d="M128,92 C115,82 100,70 92,58"
+          fill="none"
+          stroke="#5C3D1E"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+        <path
+          d="M118,82 C105,72 95,62 88,52"
+          fill="none"
+          stroke="#5C3D1E"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+        <path
+          d="M172,92 C185,82 200,70 208,58"
+          fill="none"
+          stroke="#5C3D1E"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+        <path
+          d="M182,82 C195,72 205,62 212,52"
+          fill="none"
+          stroke="#5C3D1E"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+
+        <g className="rl-canopy">
+          <circle cx={150} cy={75} r={38} fill="#2D6A2F" />
+          <circle cx={118} cy={88} r={28} fill="#3A7A3A" />
+          <circle cx={182} cy={88} r={28} fill="#3A7A3A" />
+        </g>
+      </svg>
+    </>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import RootsLoader from "../../components/RootsLoader";
 import { supabase } from "../../lib/supabaseClient";
 
 const stakeholderTypeOptions = [
@@ -18,6 +19,121 @@ const relationshipOptions = [
   "other",
 ];
 
+function StakeholderListCards({ stakeholders, onDelete }) {
+  if (stakeholders.length === 0) {
+    return (
+      <p
+        style={{
+          margin: 0,
+          textAlign: "center",
+          color: "#6B7280",
+          fontFamily: '"DM Sans", system-ui, sans-serif',
+        }}
+      >
+        No stakeholders added yet.
+      </p>
+    );
+  }
+
+  return stakeholders.map((stakeholder) => {
+    const isDecisionMaker = Boolean(
+      stakeholder.in_decision_making_role ?? stakeholder.is_decision_maker
+    );
+    return (
+      <article
+        key={stakeholder.id}
+        style={{
+          border: "1px solid #E3E3E3",
+          borderLeft: "4px solid #2D6A2F",
+          backgroundColor: "#FFFFFF",
+          borderRadius: "10px",
+          padding: "14px 16px",
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "12px",
+          alignItems: "flex-start",
+        }}
+      >
+        <div style={{ flex: 1 }}>
+          <h3
+            style={{
+              margin: "0 0 6px",
+              color: "#2D6A2F",
+              fontFamily: "Georgia, serif",
+              fontSize: "1.05rem",
+            }}
+          >
+            {stakeholder.name || "Unnamed stakeholder"}
+          </h3>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "6px",
+              marginBottom: "8px",
+            }}
+          >
+            <span
+              style={{
+                backgroundColor: "#A8D4AA",
+                color: "#2D6A2F",
+                borderRadius: "999px",
+                padding: "4px 8px",
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                fontSize: "0.76rem",
+                fontWeight: 600,
+              }}
+            >
+              {stakeholder.stakeholder_type || "other"}
+            </span>
+            <span
+              style={{
+                backgroundColor: "#A8D4AA",
+                color: "#2D6A2F",
+                borderRadius: "999px",
+                padding: "4px 8px",
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                fontSize: "0.76rem",
+                fontWeight: 600,
+              }}
+            >
+              {stakeholder.relationship_to_program || "other"}
+            </span>
+          </div>
+          <p
+            style={{
+              margin: 0,
+              color: isDecisionMaker ? "#2D6A2F" : "#6B7280",
+              fontFamily: '"DM Sans", system-ui, sans-serif',
+              fontSize: "0.82rem",
+              fontWeight: 600,
+            }}
+          >
+            {isDecisionMaker ? "Decision maker" : "Affected by decisions"}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onDelete(stakeholder.id)}
+          style={{
+            padding: 0,
+            border: "none",
+            backgroundColor: "transparent",
+            color: "#B42318",
+            cursor: "pointer",
+            fontFamily: '"DM Sans", system-ui, sans-serif',
+            fontWeight: 700,
+            textDecoration: "underline",
+          }}
+        >
+          Remove
+        </button>
+      </article>
+    );
+  });
+}
+
 function StakeholderMap() {
   const navigate = useNavigate();
   const [stakeholders, setStakeholders] = useState([]);
@@ -26,6 +142,7 @@ function StakeholderMap() {
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState("");
   const [continueError, setContinueError] = useState("");
+  const [isGapAnalysisRunning, setIsGapAnalysisRunning] = useState(false);
   const [form, setForm] = useState({
     name: "",
     stakeholder_type: "community_member",
@@ -180,14 +297,81 @@ function StakeholderMap() {
     }
   }
 
-  function handleSaveAndContinue() {
+  async function handleSaveAndContinue() {
     if (stakeholders.length < 2) {
       setContinueError("Add at least 2 stakeholders before continuing.");
       return;
     }
     setError("");
     setContinueError("");
-    navigate("/stage01/documents");
+    setIsGapAnalysisRunning(true);
+
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      setError("Your session has expired. Please sign in again.");
+      setIsGapAnalysisRunning(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/stage01/stakeholder-gap`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        let backendError = "Could not run stakeholder gap analysis.";
+        try {
+          const payload = await response.json();
+          if (payload?.error) backendError = payload.error;
+        } catch {
+          // ignore parse failures
+        }
+        throw new Error(backendError);
+      }
+
+      const payload = await response.json();
+      const next = {
+        power_gaps: Array.isArray(payload?.power_gaps)
+          ? payload.power_gaps
+          : [],
+        missing_stakeholder_types: Array.isArray(
+          payload?.missing_stakeholder_types
+        )
+          ? payload.missing_stakeholder_types
+          : [],
+        questions_to_consider: Array.isArray(
+          payload?.questions_to_consider
+        )
+          ? payload.questions_to_consider
+          : [],
+      };
+      try {
+        sessionStorage.setItem(
+          "stakeholder_gap_analysis",
+          JSON.stringify(next)
+        );
+      } catch {
+        // ignore quota or privacy mode
+      }
+      try {
+        sessionStorage.setItem(
+          "stakeholder_list",
+          JSON.stringify(stakeholders)
+        );
+      } catch {
+        // ignore quota or privacy mode
+      }
+      navigate("/stage01/garden");
+    } catch (gapError) {
+      setError(
+        gapError.message || "Could not run stakeholder gap analysis."
+      );
+    } finally {
+      setIsGapAnalysisRunning(false);
+    }
   }
 
   return (
@@ -535,120 +719,32 @@ function StakeholderMap() {
           >
             Loading stakeholders...
           </p>
+        ) : isGapAnalysisRunning ? (
+          <div
+            style={{
+              textAlign: "center",
+              padding: "36px 16px 48px",
+            }}
+          >
+            <p
+              style={{
+                margin: "0 0 20px",
+                color: "#2D6A2F",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
+                fontSize: "1.2rem",
+              }}
+            >
+              Mapping your garden...
+            </p>
+            <RootsLoader />
+          </div>
         ) : (
           <div style={{ display: "grid", gap: "12px" }}>
-            {stakeholders.length === 0 ? (
-              <p
-                style={{
-                  margin: 0,
-                  textAlign: "center",
-                  color: "#6B7280",
-                  fontFamily: '"DM Sans", system-ui, sans-serif',
-                }}
-              >
-                No stakeholders added yet.
-              </p>
-            ) : (
-              stakeholders.map((stakeholder) => {
-                const isDecisionMaker = Boolean(
-                  stakeholder.in_decision_making_role ?? stakeholder.is_decision_maker
-                );
-                return (
-                <article
-                  key={stakeholder.id}
-                  style={{
-                    border: "1px solid #E3E3E3",
-                    borderLeft: "4px solid #2D6A2F",
-                    backgroundColor: "#FFFFFF",
-                    borderRadius: "10px",
-                    padding: "14px 16px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: "12px",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <div style={{ flex: 1 }}>
-                    <h3
-                      style={{
-                        margin: "0 0 6px",
-                        color: "#2D6A2F",
-                        fontFamily: "Georgia, serif",
-                        fontSize: "1.05rem",
-                      }}
-                    >
-                      {stakeholder.name || "Unnamed stakeholder"}
-                    </h3>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: "6px",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      <span
-                        style={{
-                          backgroundColor: "#A8D4AA",
-                          color: "#2D6A2F",
-                          borderRadius: "999px",
-                          padding: "4px 8px",
-                          fontFamily: '"DM Sans", system-ui, sans-serif',
-                          fontSize: "0.76rem",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {stakeholder.stakeholder_type || "other"}
-                      </span>
-                      <span
-                        style={{
-                          backgroundColor: "#A8D4AA",
-                          color: "#2D6A2F",
-                          borderRadius: "999px",
-                          padding: "4px 8px",
-                          fontFamily: '"DM Sans", system-ui, sans-serif',
-                          fontSize: "0.76rem",
-                          fontWeight: 600,
-                        }}
-                      >
-                        {stakeholder.relationship_to_program || "other"}
-                      </span>
-                    </div>
-                    <p
-                      style={{
-                        margin: 0,
-                        color: isDecisionMaker ? "#2D6A2F" : "#6B7280",
-                        fontFamily: '"DM Sans", system-ui, sans-serif',
-                        fontSize: "0.82rem",
-                        fontWeight: 600,
-                      }}
-                    >
-                      {isDecisionMaker
-                        ? "Decision maker"
-                        : "Affected by decisions"}
-                    </p>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteStakeholder(stakeholder.id)}
-                    style={{
-                      padding: 0,
-                      border: "none",
-                      backgroundColor: "transparent",
-                      color: "#B42318",
-                      cursor: "pointer",
-                      fontFamily: '"DM Sans", system-ui, sans-serif',
-                      fontWeight: 700,
-                      textDecoration: "underline",
-                    }}
-                  >
-                    Remove
-                  </button>
-                </article>
-                );
-              })
-            )}
+            <StakeholderListCards
+              stakeholders={stakeholders}
+              onDelete={handleDeleteStakeholder}
+            />
           </div>
         )}
 
@@ -664,25 +760,27 @@ function StakeholderMap() {
             {error}
           </p>
         ) : null}
-        <button
-          type="button"
-          onClick={handleSaveAndContinue}
-          style={{
-            width: "100%",
-            marginTop: "16px",
-            padding: "12px",
-            borderRadius: "8px",
-            border: "none",
-            backgroundColor: "#2D6A2F",
-            color: "#FFFFFF",
-            cursor: "pointer",
-            fontFamily: '"DM Sans", system-ui, sans-serif',
-            fontWeight: 600,
-            fontSize: "1rem",
-          }}
-        >
-          Save and continue
-        </button>
+        {!isLoading && !isGapAnalysisRunning ? (
+          <button
+            type="button"
+            onClick={handleSaveAndContinue}
+            style={{
+              width: "100%",
+              marginTop: "16px",
+              padding: "12px",
+              borderRadius: "8px",
+              border: "none",
+              backgroundColor: "#2D6A2F",
+              color: "#FFFFFF",
+              cursor: "pointer",
+              fontFamily: '"DM Sans", system-ui, sans-serif',
+              fontWeight: 600,
+              fontSize: "1rem",
+            }}
+          >
+            Save and continue
+          </button>
+        ) : null}
         {continueError ? (
           <p
             style={{

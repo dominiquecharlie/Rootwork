@@ -12,6 +12,7 @@ import DocumentUpload from "./pages/stage01/DocumentUpload";
 import MissionFraming from "./pages/stage01/MissionFraming";
 import ProgramDesign from "./pages/stage01/ProgramDesign";
 import StakeholderEducation from "./pages/stage01/StakeholderEducation";
+import StakeholderGardenResults from "./pages/stage01/StakeholderGardenResults";
 import StakeholderMap from "./pages/stage01/StakeholderMap";
 import Stage02Intro from "./pages/stage02/Stage02Intro";
 
@@ -96,6 +97,14 @@ function App() {
         element={
           <ProtectedRoute>
             <StakeholderMap />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage01/garden"
+        element={
+          <ProtectedRoute>
+            <StakeholderGardenResults />
           </ProtectedRoute>
         }
       />

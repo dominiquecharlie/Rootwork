@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import RootsLoader from "../../components/RootsLoader";
 import { supabase } from "../../lib/supabaseClient";
 
 const fieldStyle = {
@@ -115,6 +116,34 @@ const changeLevelOptions = [
 function optionLabel(options, value) {
   const found = options.find((o) => o.value === value);
   return found?.label && found.value !== "" ? found.label : value || "";
+}
+
+const changeLevelHelperStyle = {
+  margin: "0 0 10px",
+  color: "#6B7280",
+  fontFamily: '"DM Sans", system-ui, sans-serif',
+  fontSize: "0.82rem",
+  lineHeight: 1.5,
+};
+
+function intendedChangeFirstBullet(changeLevel) {
+  if (!changeLevel) {
+    return "Pick a level in the field above, then describe the shift you hope to see at that level.";
+  }
+  if (changeLevel === "multiple_levels") {
+    return "Describe the shift you hope to see across the multiple levels you have in mind.";
+  }
+  const levelWord =
+    changeLevel === "individual"
+      ? "individual"
+      : changeLevel === "family"
+        ? "family or household"
+        : changeLevel === "community"
+          ? "community"
+          : changeLevel === "systems"
+            ? "systems or structural"
+            : "selected";
+  return `Describe the shift you hope to see at the ${levelWord} level.`;
 }
 
 function DraftLabel() {
@@ -236,12 +265,12 @@ const INTAKE_DISPLAY_ROWS = [
     label: "What are you hoping to change in the immediate term?",
   },
   {
-    key: "intended_change",
-    label: "What longer-term change do you hope your outputs lead to?",
-  },
-  {
     key: "change_level",
     label: "At what level is this change happening?",
+  },
+  {
+    key: "intended_change",
+    label: "What longer-term change do you hope your outputs lead to?",
   },
   {
     key: "currently_measuring",
@@ -486,15 +515,6 @@ function ProgramDesign() {
           padding: "24px",
         }}
       >
-        <style>
-          {`
-            @keyframes programDesignPulse {
-              0% { transform: scale(1); opacity: 1; }
-              50% { transform: scale(1.12); opacity: 0.65; }
-              100% { transform: scale(1); opacity: 1; }
-            }
-          `}
-        </style>
         <section
           style={{
             width: "100%",
@@ -505,6 +525,9 @@ function ProgramDesign() {
             backgroundColor: "#FAF9F7",
             padding: "32px 28px",
             boxSizing: "border-box",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
           }}
         >
           <h1
@@ -520,7 +543,7 @@ function ProgramDesign() {
           </h1>
           <p
             style={{
-              margin: "0 auto 18px",
+              margin: "0 auto 22px",
               maxWidth: "620px",
               color: "#6B7280",
               fontFamily: '"DM Sans", system-ui, sans-serif',
@@ -528,21 +551,10 @@ function ProgramDesign() {
               lineHeight: 1.6,
             }}
           >
-            Claude is looking for alignment gaps between your goals, your
-            delivery model, and what you are currently measuring. This takes a
-            few seconds.
+            Claude is checking how well your inputs, activities, outputs, and
+            outcomes connect. This takes a few seconds.
           </p>
-          <div
-            aria-hidden="true"
-            style={{
-              width: "1.5rem",
-              height: "1.5rem",
-              borderRadius: "999px",
-              backgroundColor: "#2D6A2F",
-              margin: "0 auto",
-              animation: "programDesignPulse 1.2s ease-in-out infinite",
-            }}
-          />
+          <RootsLoader />
         </section>
       </main>
     );
@@ -1235,8 +1247,54 @@ function ProgramDesign() {
 
           <FormSection
             title="Outcomes"
-            explanation="What longer-term change are you working toward? Outcomes are the deeper shift that builds on your outputs."
+            explanation="Outcomes are the longer-term shifts that happen because of your outputs. Think 6 months to 2 years out. At what level is this change happening, for one person, for a community, or for a system?"
           >
+            <div style={fieldStyle}>
+              <FieldLabelWithHint
+                htmlFor="changeLevel"
+                fieldKey="change_level"
+                prefilledHints={prefilledHints}
+              >
+                At what level is this change happening?
+              </FieldLabelWithHint>
+              <div style={changeLevelHelperStyle}>
+                <div style={{ marginBottom: "6px" }}>
+                  <strong style={{ color: "#4B5563" }}>Individual</strong>
+                  {": change happens for each person who participates"}
+                </div>
+                <div style={{ marginBottom: "6px" }}>
+                  <strong style={{ color: "#4B5563" }}>Family</strong>
+                  {": change happens for households or family units together"}
+                </div>
+                <div style={{ marginBottom: "6px" }}>
+                  <strong style={{ color: "#4B5563" }}>Community</strong>
+                  {": change happens across a neighborhood, group, or population"}
+                </div>
+                <div style={{ marginBottom: "6px" }}>
+                  <strong style={{ color: "#4B5563" }}>Systems</strong>
+                  {": change happens in policies, institutions, or structural conditions"}
+                </div>
+                <div>
+                  <strong style={{ color: "#4B5563" }}>Multiple levels</strong>
+                  {": change shows up at more than one of these scales at once"}
+                </div>
+              </div>
+              <select
+                id="changeLevel"
+                name="changeLevel"
+                required
+                value={changeLevel}
+                onChange={(e) => setChangeLevel(e.target.value)}
+                style={selectStyle}
+              >
+                {changeLevelOptions.map((opt) => (
+                  <option key={opt.value || "empty"} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div style={fieldStyle}>
               <FieldLabelWithHint
                 htmlFor="intendedChange"
@@ -1252,18 +1310,15 @@ function ProgramDesign() {
                   margin: "0 0 10px",
                 }}
               >
+                <li>{intendedChangeFirstBullet(changeLevel)}</li>
                 <li>
-                  Describe the change you hope to see 6 months, 1 year, or longer
-                  after participation
+                  How do you think the immediate changes will affect people or
+                  the community over time?
                 </li>
                 <li>
-                  How do you think the immediate changes will affect participants
-                  or the community over time?
-                </li>
-                <li>
-                  Example: Participants build emergency savings, reduce debt,
-                  and report feeling more confident managing their finances over
-                  the long term
+                  Example: Participants build emergency savings, reduce debt, and
+                  report feeling more confident managing their finances over the
+                  long term
                 </li>
               </ul>
               <textarea
@@ -1274,30 +1329,6 @@ function ProgramDesign() {
                 onChange={(e) => setIntendedChange(e.target.value)}
                 style={textareaStyle}
               />
-            </div>
-
-            <div style={fieldStyle}>
-              <FieldLabelWithHint
-                htmlFor="changeLevel"
-                fieldKey="change_level"
-                prefilledHints={prefilledHints}
-              >
-                At what level is this change happening?
-              </FieldLabelWithHint>
-              <select
-                id="changeLevel"
-                name="changeLevel"
-                required
-                value={changeLevel}
-                onChange={(e) => setChangeLevel(e.target.value)}
-                style={selectStyle}
-              >
-                {changeLevelOptions.map((opt) => (
-                  <option key={opt.value || "empty"} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
             </div>
           </FormSection>
 
