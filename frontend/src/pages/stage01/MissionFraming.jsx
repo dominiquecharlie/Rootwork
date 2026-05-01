@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import RootsLoader from "../../components/RootsLoader";
 import { supabase } from "../../lib/supabaseClient";
 
 const fieldStyle = {
@@ -54,7 +55,7 @@ function DraftLabel() {
         letterSpacing: "0.02em",
       }}
     >
-      AI draft — review and edit before use
+      AI draft. Review and edit before use
     </span>
   );
 }
@@ -159,15 +160,6 @@ function MissionFraming() {
           padding: "24px",
         }}
       >
-        <style>
-          {`
-            @keyframes missionPulse {
-              0% { transform: scale(1); opacity: 1; }
-              50% { transform: scale(1.12); opacity: 0.65; }
-              100% { transform: scale(1); opacity: 1; }
-            }
-          `}
-        </style>
         <section
           style={{
             width: "100%",
@@ -178,6 +170,9 @@ function MissionFraming() {
             backgroundColor: "#FAF9F7",
             padding: "32px 28px",
             boxSizing: "border-box",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
           }}
         >
           <h1
@@ -193,7 +188,7 @@ function MissionFraming() {
           </h1>
           <p
             style={{
-              margin: "0 auto 18px",
+              margin: "0 auto 22px",
               maxWidth: "620px",
               color: "#6B7280",
               fontFamily: '"DM Sans", system-ui, sans-serif',
@@ -202,20 +197,10 @@ function MissionFraming() {
             }}
           >
             This usually takes a few seconds. Claude will surface a draft and
-            some things to consider — remember, you're the expert here. Review
+            some things to consider. Remember, you are the expert here. Review
             everything before moving on.
           </p>
-          <div
-            aria-hidden="true"
-            style={{
-              width: "1.5rem",
-              height: "1.5rem",
-              borderRadius: "999px",
-              backgroundColor: "#2D6A2F",
-              margin: "0 auto",
-              animation: "missionPulse 1.2s ease-in-out infinite",
-            }}
-          />
+          <RootsLoader />
         </section>
       </main>
     );

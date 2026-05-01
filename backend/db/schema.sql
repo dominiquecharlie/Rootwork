@@ -689,3 +689,52 @@ create index if not exists funding_opportunities_active_type_idx on public.fundi
 alter table public.org_profiles add column if not exists draft_mission_statement text;
 alter table public.org_profiles add column if not exists claude_mission_flags jsonb not null default '[]'::jsonb;
 alter table public.organizations add column if not exists org_phase text;
+
+alter table public.program_designs add column if not exists claude_alignment_flags jsonb not null default '{}'::jsonb;
+
+-- Stage 01 optional program documents (upload before program design)
+create table if not exists public.stage01_program_documents (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  storage_path text not null,
+  original_filename text not null,
+  mime_type text,
+  file_size_bytes bigint,
+  uploaded_by uuid references auth.users(id),
+  extracted_data jsonb,
+  uploaded_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz
+);
+
+alter table public.stage01_program_documents enable row level security;
+
+create policy "stage01_program_documents_read"
+  on public.stage01_program_documents
+  for select
+  using (public.is_org_member(org_id));
+
+create policy "stage01_program_documents_write"
+  on public.stage01_program_documents
+  for insert
+  with check (public.is_org_member(org_id));
+
+create policy "stage01_program_documents_update"
+  on public.stage01_program_documents
+  for update
+  using (public.is_org_member(org_id))
+  with check (public.is_org_member(org_id));
+
+create policy "stage01_program_documents_delete"
+  on public.stage01_program_documents
+  for delete
+  using (public.is_org_member(org_id));
+
+create trigger stage01_program_documents_set_updated_at
+  before update on public.stage01_program_documents
+  for each row execute function public.handle_updated_at();
+
+create index if not exists stage01_program_documents_org_id_idx
+  on public.stage01_program_documents (org_id);
+
+alter table public.stage01_program_documents add column if not exists extracted_data jsonb;

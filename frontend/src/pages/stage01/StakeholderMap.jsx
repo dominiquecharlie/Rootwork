@@ -18,36 +18,14 @@ const relationshipOptions = [
   "other",
 ];
 
-function DraftLabel() {
-  return (
-    <span
-      style={{
-        display: "inline-block",
-        marginBottom: "10px",
-        padding: "6px 12px",
-        borderRadius: "8px",
-        backgroundColor: "#ECFDF3",
-        color: "#166534",
-        fontFamily: '"DM Sans", system-ui, sans-serif',
-        fontSize: "0.76rem",
-        fontWeight: 600,
-      }}
-    >
-      AI-surfaced — verify before acting
-    </span>
-  );
-}
-
 function StakeholderMap() {
   const navigate = useNavigate();
   const [stakeholders, setStakeholders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState("");
   const [continueError, setContinueError] = useState("");
-  const [gapAnalysis, setGapAnalysis] = useState(null);
   const [form, setForm] = useState({
     name: "",
     stakeholder_type: "community_member",
@@ -160,7 +138,6 @@ function StakeholderMap() {
       await loadStakeholders();
       resetForm();
       setIsAdding(false);
-      setGapAnalysis(null);
     } catch (saveError) {
       setError(saveError.message || "Could not add stakeholder.");
     } finally {
@@ -198,63 +175,19 @@ function StakeholderMap() {
       }
 
       setStakeholders((prev) => prev.filter((stakeholder) => stakeholder.id !== id));
-      setGapAnalysis(null);
     } catch (deleteError) {
       setError(deleteError.message || "Could not delete stakeholder.");
     }
   }
 
-  async function handleSaveAndContinue() {
+  function handleSaveAndContinue() {
     if (stakeholders.length < 2) {
       setContinueError("Add at least 2 stakeholders before continuing.");
       return;
     }
-
-    setIsAnalyzing(true);
     setError("");
     setContinueError("");
-
-    const accessToken = await getAccessToken();
-    if (!accessToken) {
-      setError("Your session has expired. Please sign in again.");
-      setIsAnalyzing(false);
-      return;
-    }
-
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/stage01/stakeholder-gap`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        let backendError = "Could not analyze stakeholder map.";
-        try {
-          const payload = await response.json();
-          if (payload?.error) backendError = payload.error;
-        } catch {
-          // ignore parse failures
-        }
-        throw new Error(backendError);
-      }
-
-      const payload = await response.json();
-      setGapAnalysis({
-        power_gaps: Array.isArray(payload?.power_gaps) ? payload.power_gaps : [],
-        missing_stakeholder_types: Array.isArray(payload?.missing_stakeholder_types)
-          ? payload.missing_stakeholder_types
-          : [],
-        questions_to_consider: Array.isArray(payload?.questions_to_consider)
-          ? payload.questions_to_consider
-          : [],
-      });
-    } catch (analysisError) {
-      setError(analysisError.message || "Could not analyze stakeholder map.");
-    } finally {
-      setIsAnalyzing(false);
-    }
+    navigate("/stage01/documents");
   }
 
   return (
@@ -731,177 +664,25 @@ function StakeholderMap() {
             {error}
           </p>
         ) : null}
-        {gapAnalysis ? (
-          <div
-            style={{
-              marginTop: "18px",
-              border: "1px solid #A8D4AA",
-              borderRadius: "10px",
-              backgroundColor: "#F0F7F0",
-              padding: "16px",
-              textAlign: "left",
-            }}
-          >
-            <DraftLabel />
-            <h3
-              style={{
-                margin: "0 0 8px",
-                color: "#2D6A2F",
-                fontFamily: "Georgia, serif",
-                fontWeight: 700,
-                fontSize: "1.05rem",
-              }}
-            >
-              Power gaps noticed
-            </h3>
-            <ul style={{ margin: "0 0 14px", color: "#2C2C2C", paddingLeft: "20px" }}>
-              {(gapAnalysis.power_gaps || []).map((item, idx) => (
-                <li
-                  key={`power-${idx}`}
-                  style={{
-                    marginBottom: "6px",
-                    fontFamily: '"DM Sans", system-ui, sans-serif',
-                    fontSize: "0.92rem",
-                  }}
-                >
-                  {item}
-                </li>
-              ))}
-            </ul>
-
-            <h3
-              style={{
-                margin: "0 0 8px",
-                color: "#2D6A2F",
-                fontFamily: "Georgia, serif",
-                fontWeight: 700,
-                fontSize: "1.05rem",
-              }}
-            >
-              Stakeholder types not yet mapped
-            </h3>
-            <ul style={{ margin: "0 0 14px", color: "#2C2C2C", paddingLeft: "20px" }}>
-              {(gapAnalysis.missing_stakeholder_types || []).map((item, idx) => (
-                <li
-                  key={`missing-${idx}`}
-                  style={{
-                    marginBottom: "6px",
-                    fontFamily: '"DM Sans", system-ui, sans-serif',
-                    fontSize: "0.92rem",
-                  }}
-                >
-                  {item}
-                </li>
-              ))}
-            </ul>
-
-            <h3
-              style={{
-                margin: "0 0 8px",
-                color: "#2D6A2F",
-                fontFamily: "Georgia, serif",
-                fontWeight: 700,
-                fontSize: "1.05rem",
-              }}
-            >
-              Questions to sit with
-            </h3>
-            <ul style={{ margin: 0, color: "#2C2C2C", paddingLeft: "20px" }}>
-              {(gapAnalysis.questions_to_consider || []).map((item, idx) => (
-                <li
-                  key={`question-${idx}`}
-                  style={{
-                    marginBottom: "6px",
-                    fontFamily: '"DM Sans", system-ui, sans-serif',
-                    fontSize: "0.92rem",
-                    fontStyle: "italic",
-                  }}
-                >
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-
-        {gapAnalysis ? (
-          <div
-            style={{
-              marginTop: "14px",
-              display: "grid",
-              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-              gap: "10px",
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setGapAnalysis(null)}
-              style={{
-                width: "100%",
-                padding: "12px",
-                borderRadius: "8px",
-                border: "1px solid #2D6A2F",
-                backgroundColor: "#FFFFFF",
-                color: "#2D6A2F",
-                cursor: "pointer",
-                fontFamily: '"DM Sans", system-ui, sans-serif',
-                fontWeight: 600,
-                fontSize: "0.95rem",
-              }}
-            >
-              Add more stakeholders
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate("/stage01/program-design")}
-              style={{
-                width: "100%",
-                padding: "12px",
-                borderRadius: "8px",
-                border: "none",
-                backgroundColor: "#2D6A2F",
-                color: "#FFFFFF",
-                cursor: "pointer",
-                fontFamily: '"DM Sans", system-ui, sans-serif',
-                fontWeight: 600,
-                fontSize: "0.95rem",
-              }}
-            >
-              Continue to program design
-            </button>
-          </div>
-        ) : isAnalyzing ? (
-          <p
-            style={{
-              marginTop: "16px",
-              color: "#6B7280",
-              fontFamily: '"DM Sans", system-ui, sans-serif',
-              textAlign: "center",
-            }}
-          >
-            Analyzing your stakeholder map...
-          </p>
-        ) : (
-          <button
-            type="button"
-            onClick={handleSaveAndContinue}
-            style={{
-              width: "100%",
-              marginTop: "16px",
-              padding: "12px",
-              borderRadius: "8px",
-              border: "none",
-              backgroundColor: "#2D6A2F",
-              color: "#FFFFFF",
-              cursor: "pointer",
-              fontFamily: '"DM Sans", system-ui, sans-serif',
-              fontWeight: 600,
-              fontSize: "1rem",
-            }}
-          >
-            Save and continue
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={handleSaveAndContinue}
+          style={{
+            width: "100%",
+            marginTop: "16px",
+            padding: "12px",
+            borderRadius: "8px",
+            border: "none",
+            backgroundColor: "#2D6A2F",
+            color: "#FFFFFF",
+            cursor: "pointer",
+            fontFamily: '"DM Sans", system-ui, sans-serif',
+            fontWeight: 600,
+            fontSize: "1rem",
+          }}
+        >
+          Save and continue
+        </button>
         {continueError ? (
           <p
             style={{
