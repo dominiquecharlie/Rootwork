@@ -256,11 +256,15 @@ function normalizeQuestionsFromModel(raw, tool_type, survey_purpose) {
   const t = (tool_type || "").toLowerCase().trim();
   for (const q of raw) {
     if (out.length >= cap) break;
-    const text =
+    // Model still emits English string text/options. Adapt to the multilingual
+    // shape at this boundary only. Do not rewrite the prompt.
+    const textEn =
       typeof q.text === "string"
         ? q.text.trim()
-        : String(q.text ?? "").trim();
-    if (!text) continue;
+        : typeof q.text?.en === "string"
+          ? q.text.en.trim()
+          : "";
+    if (!textEn) continue;
     let type = (q.type || "short_text").toLowerCase().trim();
     if (!ALLOWED_Q_TYPES.has(type)) type = "short_text";
     if (t === "administrative") {
@@ -275,15 +279,24 @@ function normalizeQuestionsFromModel(raw, tool_type, survey_purpose) {
       }
     }
     const required = Boolean(q.required);
-    const row = { text, type, required };
+    const row = { text: { en: textEn }, type, required };
     if (type === "multiple_choice") {
       const opts = Array.isArray(q.options)
         ? q.options
-            .map((o) => String(o ?? "").trim())
+            .map((o) => {
+              if (typeof o === "string") return o.trim();
+              if (o && typeof o === "object") {
+                if (typeof o.label === "string") return o.label.trim();
+                if (typeof o.label?.en === "string") return o.label.en.trim();
+              }
+              return "";
+            })
             .filter(Boolean)
         : [];
-      row.options =
+      const labels =
         opts.length >= 2 ? opts.slice(0, 24) : ["Option A", "Option B"];
+      // Ids are assigned later by normalizeQuestions once the question has an id.
+      row.options = labels.map((en) => ({ label: { en } }));
     }
     const rationale =
       typeof q.rationale === "string" ? q.rationale.trim() : "";

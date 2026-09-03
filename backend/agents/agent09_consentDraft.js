@@ -19,7 +19,15 @@ function summarizeQuestions(questions) {
   }
   return questions
     .map((q, i) => {
-      const text = typeof q.text === "string" ? q.text : q.questionText || "";
+      // Prefer English from the localized map; fall back to legacy string text.
+      let text = "";
+      if (typeof q.text === "string") {
+        text = q.text;
+      } else if (q.text && typeof q.text === "object" && typeof q.text.en === "string") {
+        text = q.text.en;
+      } else if (typeof q.questionText === "string") {
+        text = q.questionText;
+      }
       const type = q.type || q.questionType || "";
       const req = q.required ? "required" : "optional";
       return `${i + 1}. [${type}] (${req}) ${text}`;

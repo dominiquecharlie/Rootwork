@@ -61,7 +61,200 @@ const DISPLAY_IF_OPS = new Set([
   "not_answered",
 ]);
 
-function parseDisplayIf(raw) {
+const DEFAULT_TOOL_LANGUAGES = ["en", "es"];
+
+const LANGUAGE_LABELS = {
+  en: "English",
+  es: "Spanish",
+};
+
+function languageLabel(code) {
+  return LANGUAGE_LABELS[code] || code;
+}
+
+function normalizeToolLanguages(raw) {
+  if (!Array.isArray(raw)) return [...DEFAULT_TOOL_LANGUAGES];
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const code = item.trim().toLowerCase();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    out.push(code);
+  }
+  if (!seen.has("en")) out.unshift("en");
+  return out.length > 0 ? out : [...DEFAULT_TOOL_LANGUAGES];
+}
+
+function emptyLangMap(languages) {
+  const m = {};
+  for (const lang of languages) m[lang] = "";
+  return m;
+}
+
+function readLocalizedMap(raw) {
+  if (typeof raw === "string") {
+    const en = raw.trim();
+    return en ? { en } : {};
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const out = {};
+    for (const [lang, val] of Object.entries(raw)) {
+      if (typeof lang !== "string") continue;
+      const key = lang.trim();
+      if (!key || typeof val !== "string") continue;
+      const trimmed = val.trim();
+      if (trimmed) out[key] = trimmed;
+    }
+    return out;
+  }
+  return {};
+}
+
+function localizedEn(raw) {
+  if (typeof raw === "string") return raw.trim();
+  if (raw && typeof raw === "object" && typeof raw.en === "string") {
+    return raw.en.trim();
+  }
+  return "";
+}
+
+function questionTextEn(q) {
+  return localizedEn(q?.text);
+}
+
+function optionLabelEn(opt) {
+  if (typeof opt === "string") return opt.trim();
+  return localizedEn(opt?.label);
+}
+
+function optionIdOf(opt) {
+  if (opt && typeof opt === "object" && typeof opt.id === "string") {
+    return opt.id.trim();
+  }
+  return "";
+}
+
+function hasSpanishTranslation(q) {
+  const text = q?.text;
+  if (
+    text &&
+    typeof text === "object" &&
+    typeof text.es === "string" &&
+    text.es.trim()
+  ) {
+    return true;
+  }
+  if (Array.isArray(q?.options)) {
+    for (const opt of q.options) {
+      const es = opt && typeof opt === "object" ? opt.label?.es : null;
+      if (typeof es === "string" && es.trim()) return true;
+    }
+  }
+  return false;
+}
+
+function normalizeClientOption(o) {
+  if (typeof o === "string") {
+    const en = o.trim();
+    if (!en) return null;
+    return { label: { en } };
+  }
+  if (!o || typeof o !== "object" || Array.isArray(o)) return null;
+  const label = readLocalizedMap(o.label);
+  if (!localizedEn(label)) return null;
+  const row = { label };
+  if (typeof o.id === "string" && o.id.trim()) {
+    row.id = o.id.trim();
+  }
+  return row;
+}
+
+function remapDisplayIfValue(value, refQuestion) {
+  if (!value || !refQuestion || refQuestion.type !== "multiple_choice") {
+    return value;
+  }
+  const opts = Array.isArray(refQuestion.options) ? refQuestion.options : [];
+  if (opts.some((o) => optionIdOf(o) === value)) return value;
+  for (const o of opts) {
+    const id = optionIdOf(o);
+    if (id && optionLabelEn(o) === value) return id;
+  }
+  return value;
+}
+
+function normalizeClientQuestion(q, fallbackId) {
+  const id =
+    typeof q?.id === "string" && q.id.trim()
+      ? q.id.trim()
+      : fallbackId || newId();
+  const text = readLocalizedMap(
+    q?.text != null ? q.text : q?.questionText
+  );
+  if (!localizedEn(text)) return null;
+  let type = (q.type || "short_text").toLowerCase().trim();
+  if (!QUESTION_TYPE_OPTIONS.some((o) => o.value === type)) {
+    type = "short_text";
+  }
+  const row = {
+    id,
+    text,
+    type,
+    required: Boolean(q.required),
+  };
+  if (type === "multiple_choice" && Array.isArray(q.options)) {
+    row.options = q.options.map(normalizeClientOption).filter(Boolean);
+  }
+  if (q.source === "ai" || q.source === "user") {
+    row.source = q.source;
+  }
+  if (typeof q.rationale === "string" && q.rationale.trim()) {
+    row.rationale = q.rationale.trim();
+  }
+  if (q.display_if && typeof q.display_if === "object" && !Array.isArray(q.display_if)) {
+    row.display_if = q.display_if;
+  }
+  return row;
+}
+
+function normalizeClientQuestions(rawQs) {
+  const mapped = (Array.isArray(rawQs) ? rawQs : [])
+    .map((q) => normalizeClientQuestion(q))
+    .filter(Boolean);
+  return mapped.map((q) => {
+    const raw = q.display_if;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      if ("display_if" in q) {
+        const { display_if: _drop, ...rest } = q;
+        return rest;
+      }
+      return q;
+    }
+    const question_id =
+      typeof raw.question_id === "string" ? raw.question_id.trim() : "";
+    const operator =
+      typeof raw.operator === "string" ? raw.operator.trim() : "";
+    if (!question_id || !DISPLAY_IF_OPS.has(operator)) {
+      const { display_if: _drop, ...rest } = q;
+      return rest;
+    }
+    const display_if = { question_id, operator };
+    if (operator === "equals" || operator === "not_equals") {
+      let value = typeof raw.value === "string" ? raw.value.trim() : "";
+      if (!value) {
+        const { display_if: _drop, ...rest } = q;
+        return rest;
+      }
+      const ref = mapped.find((x) => x.id === question_id);
+      display_if.value = remapDisplayIfValue(value, ref);
+    }
+    return { ...q, display_if };
+  });
+}
+
+// Structural read for move/delete/type guards (question id only).
+function readDisplayIf(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const question_id =
     typeof raw.question_id === "string" ? raw.question_id.trim() : "";
@@ -76,16 +269,33 @@ function parseDisplayIf(raw) {
   return { question_id, operator };
 }
 
+// Strict parse for payloads: equals/not_equals value must be an option id on
+// the referenced question when questions are provided.
+function parseDisplayIf(raw, questions) {
+  const base = readDisplayIf(raw);
+  if (!base) return null;
+  if (
+    (base.operator === "equals" || base.operator === "not_equals") &&
+    Array.isArray(questions)
+  ) {
+    const ref = questions.find((q) => q.id === base.question_id);
+    if (!ref || ref.type !== "multiple_choice") return null;
+    const opts = Array.isArray(ref.options) ? ref.options : [];
+    if (!opts.some((o) => optionIdOf(o) === base.value)) return null;
+  }
+  return base;
+}
+
 function getDependentsOnQuestion(questions, targetId) {
   return questions.filter((q) => {
-    const di = parseDisplayIf(q.display_if);
+    const di = readDisplayIf(q.display_if);
     return di && di.question_id === targetId;
   });
 }
 
 function dependentQuestionNames(dependents) {
   return dependents
-    .map((q) => (q.text || "").trim() || q.id)
+    .map((q) => questionTextEn(q) || q.id)
     .join("; ");
 }
 
@@ -105,12 +315,12 @@ function getMoveBlockReason(questions, id, delta) {
   const movedIdx = j;
   const movedId = questions[i].id;
 
-  const dep = parseDisplayIf(questions[i].display_if);
+  const dep = readDisplayIf(questions[i].display_if);
   if (dep) {
     const refIdx = next.findIndex((q) => q.id === dep.question_id);
     if (refIdx >= 0 && refIdx >= movedIdx) {
       const ref = next[refIdx];
-      const refName = (ref.text || "").trim() || ref.id;
+      const refName = questionTextEn(ref) || ref.id;
       return `Cannot move this question before "${refName}", which it depends on.`;
     }
   }
@@ -301,11 +511,16 @@ function Builder() {
 
   const [showQuestionForm, setShowQuestionForm] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState(null);
-  const [qText, setQText] = useState("");
+  const [toolLanguages, setToolLanguages] = useState(DEFAULT_TOOL_LANGUAGES);
+  const [qTextByLang, setQTextByLang] = useState(() =>
+    emptyLangMap(DEFAULT_TOOL_LANGUAGES)
+  );
   const [qType, setQType] = useState("short_text");
   const [qRequired, setQRequired] = useState(true);
   const [qOptions, setQOptions] = useState([]);
-  const [newOptionText, setNewOptionText] = useState("");
+  const [newOptionByLang, setNewOptionByLang] = useState(() =>
+    emptyLangMap(DEFAULT_TOOL_LANGUAGES)
+  );
   const [showConditionSection, setShowConditionSection] = useState(false);
   const [qCondRefId, setQCondRefId] = useState("");
   const [qCondOp, setQCondOp] = useState("equals");
@@ -357,6 +572,37 @@ function Builder() {
   const toolIdFromUrl = searchParams.get("tool_id")?.trim() || "";
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user || cancelled) return;
+        const { data: membership } = await supabase
+          .from("org_members")
+          .select("org_id")
+          .eq("user_id", user.id)
+          .limit(1)
+          .maybeSingle();
+        if (!membership?.org_id || cancelled) return;
+        const { data: org } = await supabase
+          .from("organizations")
+          .select("languages_served")
+          .eq("id", membership.org_id)
+          .maybeSingle();
+        if (cancelled || !org) return;
+        setToolLanguages(normalizeToolLanguages(org.languages_served));
+      } catch {
+        /* keep default languages */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!toolIdFromUrl) {
       setQuestions([]);
       setHydrationComplete(true);
@@ -396,42 +642,7 @@ function Builder() {
           tool.configuration && typeof tool.configuration === "object"
             ? tool.configuration
             : {};
-        const rawQs = Array.isArray(cfg.questions) ? cfg.questions : [];
-        const mapped = rawQs
-          .map((q) => {
-            const id =
-              typeof q.id === "string" && q.id.trim()
-                ? q.id.trim()
-                : newId();
-            const text = typeof q.text === "string" ? q.text : "";
-            let type = (q.type || "short_text").toLowerCase().trim();
-            if (!QUESTION_TYPE_OPTIONS.some((o) => o.value === type)) {
-              type = "short_text";
-            }
-            const row = {
-              id,
-              text,
-              type,
-              required: Boolean(q.required),
-            };
-            if (type === "multiple_choice" && Array.isArray(q.options)) {
-              row.options = q.options
-                .map((o) => String(o ?? "").trim())
-                .filter(Boolean);
-            }
-            if (q.source === "ai" || q.source === "user") {
-              row.source = q.source;
-            }
-            if (typeof q.rationale === "string" && q.rationale.trim()) {
-              row.rationale = q.rationale.trim();
-            }
-            const display_if = parseDisplayIf(q.display_if);
-            if (display_if) {
-              row.display_if = display_if;
-            }
-            return row;
-          })
-          .filter((q) => q.text.trim().length > 0);
+        const mapped = normalizeClientQuestions(cfg.questions);
         const gc = cfg.governance_checks || {};
         const wt = (tool.tool_type || "survey").toLowerCase().trim();
         const tool_type = [
@@ -558,35 +769,12 @@ function Builder() {
           setIsLoadingSuggestions(false);
           return;
         }
-        const rawQs = Array.isArray(data?.questions) ? data.questions : [];
-        const incoming = rawQs
-          .map((q) => {
-            const text = typeof q.text === "string" ? q.text.trim() : "";
-            if (!text) return null;
-            let type = (q.type || "short_text").toLowerCase().trim();
-            if (!QUESTION_TYPE_OPTIONS.some((o) => o.value === type)) {
-              type = "short_text";
-            }
-            const row = {
-              id: newId(),
-              text,
-              type,
-              required: Boolean(q.required),
-              source: "ai",
-            };
-            if (type === "multiple_choice" && Array.isArray(q.options)) {
-              const opts = q.options
-                .map((o) => String(o ?? "").trim())
-                .filter(Boolean);
-              row.options = opts.length > 0 ? opts : ["Yes", "No"];
-            }
-            if (typeof q.rationale === "string" && q.rationale.trim()) {
-              row.rationale = q.rationale.trim();
-            }
-            return row;
-          })
-          .filter(Boolean);
-        setQuestions(incoming);
+        const withIds = normalizeClientQuestions(data?.questions).map((q) => ({
+          ...q,
+          id: newId(),
+          source: "ai",
+        }));
+        setQuestions(withIds);
         setConsentLanguage(
           typeof data.consent_text === "string" ? data.consent_text : ""
         );
@@ -623,11 +811,11 @@ function Builder() {
 
   function openAddQuestionForm() {
     setEditingQuestionId(null);
-    setQText("");
+    setQTextByLang(emptyLangMap(toolLanguages));
     setQType("short_text");
     setQRequired(true);
     setQOptions([]);
-    setNewOptionText("");
+    setNewOptionByLang(emptyLangMap(toolLanguages));
     setShowConditionSection(false);
     setQCondRefId("");
     setQCondOp("equals");
@@ -639,12 +827,35 @@ function Builder() {
 
   function openEditQuestion(q) {
     setEditingQuestionId(q.id);
-    setQText(q.text);
+    const textMap = emptyLangMap(toolLanguages);
+    const existingText = readLocalizedMap(q.text);
+    for (const lang of toolLanguages) {
+      if (typeof existingText[lang] === "string") {
+        textMap[lang] = existingText[lang];
+      }
+    }
+    setQTextByLang(textMap);
     setQType(q.type);
     setQRequired(Boolean(q.required));
-    setQOptions(Array.isArray(q.options) ? [...q.options] : []);
-    setNewOptionText("");
-    const di = parseDisplayIf(q.display_if);
+    setQOptions(
+      Array.isArray(q.options)
+        ? q.options.map((o) => {
+            const normalized = normalizeClientOption(o);
+            if (!normalized) return { label: emptyLangMap(toolLanguages) };
+            const label = emptyLangMap(toolLanguages);
+            for (const lang of toolLanguages) {
+              if (typeof normalized.label[lang] === "string") {
+                label[lang] = normalized.label[lang];
+              }
+            }
+            return normalized.id
+              ? { id: normalized.id, label }
+              : { label };
+          })
+        : []
+    );
+    setNewOptionByLang(emptyLangMap(toolLanguages));
+    const di = readDisplayIf(q.display_if);
     if (di) {
       setShowConditionSection(true);
       setQCondRefId(di.question_id);
@@ -664,9 +875,9 @@ function Builder() {
   function cancelQuestionForm() {
     setShowQuestionForm(false);
     setEditingQuestionId(null);
-    setQText("");
+    setQTextByLang(emptyLangMap(toolLanguages));
     setQOptions([]);
-    setNewOptionText("");
+    setNewOptionByLang(emptyLangMap(toolLanguages));
     setShowConditionSection(false);
     setQCondRefId("");
     setQCondOp("equals");
@@ -676,9 +887,9 @@ function Builder() {
   }
 
   function saveQuestionFromForm() {
-    const text = qText.trim();
-    if (!text) {
-      setQTextError("Question text cannot be empty.");
+    const enText = (qTextByLang.en || "").trim();
+    if (!enText) {
+      setQTextError("English question text cannot be empty.");
       return;
     }
     setQTextError("");
@@ -694,7 +905,7 @@ function Builder() {
           qType !== "multiple_choice"
         ) {
           const blocked = later.filter((q) => {
-            const di = parseDisplayIf(q.display_if);
+            const di = readDisplayIf(q.display_if);
             return (
               di &&
               di.question_id === editingQuestionId &&
@@ -709,17 +920,20 @@ function Builder() {
           }
         }
         if (original.type === "multiple_choice" && qType === "multiple_choice") {
-          const oldOpts = Array.isArray(original.options) ? original.options : [];
-          const removedOrChanged = oldOpts.filter((opt) => !qOptions.includes(opt));
-          if (removedOrChanged.length > 0) {
+          const oldIds = (Array.isArray(original.options) ? original.options : [])
+            .map(optionIdOf)
+            .filter(Boolean);
+          const newIds = new Set(qOptions.map(optionIdOf).filter(Boolean));
+          const removedIds = oldIds.filter((id) => !newIds.has(id));
+          if (removedIds.length > 0) {
             const blocked = [];
             const seen = new Set();
             for (const q of later) {
-              const di = parseDisplayIf(q.display_if);
+              const di = readDisplayIf(q.display_if);
               if (
                 di &&
                 di.question_id === editingQuestionId &&
-                removedOrChanged.includes(di.value) &&
+                removedIds.includes(di.value) &&
                 !seen.has(q.id)
               ) {
                 seen.add(q.id);
@@ -728,13 +942,23 @@ function Builder() {
             }
             if (blocked.length > 0) {
               setFormBlockMessage(
-                `Cannot change these options. These questions depend on the removed or edited option text: ${dependentQuestionNames(blocked)}`
+                `Cannot remove these options. These questions depend on them: ${dependentQuestionNames(blocked)}`
               );
               return;
             }
           }
         }
       }
+    }
+
+    const text = {};
+    for (const lang of toolLanguages) {
+      const v = (qTextByLang[lang] || "").trim();
+      if (v) text[lang] = v;
+    }
+    if (!text.en) {
+      setQTextError("English question text cannot be empty.");
+      return;
     }
 
     const base = {
@@ -744,7 +968,23 @@ function Builder() {
       required: qRequired,
     };
     if (qType === "multiple_choice") {
-      base.options = qOptions.length > 0 ? [...qOptions] : [];
+      base.options = qOptions
+        .map((opt) => {
+          const label = {};
+          const rawLabel =
+            opt && typeof opt === "object" ? opt.label || {} : {};
+          for (const lang of toolLanguages) {
+            const v = (rawLabel[lang] || "").trim();
+            if (v) label[lang] = v;
+          }
+          if (!label.en) return null;
+          const row = { label };
+          if (typeof opt?.id === "string" && opt.id.trim()) {
+            row.id = opt.id.trim();
+          }
+          return row;
+        })
+        .filter(Boolean);
     }
     if (qCondRefId.trim()) {
       const display_if = {
@@ -814,10 +1054,35 @@ function Builder() {
   }
 
   function addMcOption() {
-    const t = newOptionText.trim();
-    if (!t) return;
-    setQOptions((o) => [...o, t]);
-    setNewOptionText("");
+    const en = (newOptionByLang.en || "").trim();
+    if (!en) return;
+    const label = {};
+    for (const lang of toolLanguages) {
+      const v = (newOptionByLang[lang] || "").trim();
+      if (v) label[lang] = v;
+    }
+    if (!label.en) return;
+    setQOptions((o) => [...o, { label }]);
+    setNewOptionByLang(emptyLangMap(toolLanguages));
+  }
+
+  function updateOptionLabel(index, lang, value) {
+    setQOptions((prev) =>
+      prev.map((opt, i) => {
+        if (i !== index) return opt;
+        return {
+          ...opt,
+          label: {
+            ...(opt.label || {}),
+            [lang]: value,
+          },
+        };
+      })
+    );
+  }
+
+  function removeMcOption(index) {
+    setQOptions((prev) => prev.filter((_, i) => i !== index));
   }
 
   const payloadBody = useCallback(() => {
@@ -840,7 +1105,7 @@ function Builder() {
             ? { options: q.options }
             : {}),
         };
-        const display_if = parseDisplayIf(q.display_if);
+        const display_if = parseDisplayIf(q.display_if, questions);
         if (display_if) {
           row.display_if = display_if;
         }
@@ -882,14 +1147,14 @@ function Builder() {
       setSaving(false);
       return;
     }
-    if (showQuestionForm && !qText.trim()) {
-      setQTextError("Question text cannot be empty.");
+    if (showQuestionForm && !(qTextByLang.en || "").trim()) {
+      setQTextError("English question text cannot be empty.");
       setSaving(false);
       return;
     }
     const blankMap = {};
     for (const q of questions) {
-      if (!String(q.text || "").trim()) {
+      if (!questionTextEn(q)) {
         blankMap[q.id] = "Question text cannot be empty.";
       }
     }
@@ -939,6 +1204,14 @@ function Builder() {
       setQuestionErrors({});
       if (body?.tool?.id) {
         setCollectionToolId(body.tool.id);
+      }
+      const savedCfg =
+        body?.tool?.configuration &&
+        typeof body.tool.configuration === "object"
+          ? body.tool.configuration
+          : null;
+      if (savedCfg && Array.isArray(savedCfg.questions)) {
+        setQuestions(normalizeClientQuestions(savedCfg.questions));
       }
     } catch (e) {
       setSaveError(e.message || "Could not save draft.");
@@ -1021,7 +1294,22 @@ function Builder() {
     condRefQuestion.type === "multiple_choice" &&
     Array.isArray(condRefQuestion.options)
       ? condRefQuestion.options
+          .map((opt, i) => {
+            const id = optionIdOf(opt);
+            if (!id) return null;
+            return {
+              id,
+              label: optionLabelEn(opt) || `Option ${i + 1}`,
+            };
+          })
+          .filter(Boolean)
       : [];
+  const condOptionsNeedSave =
+    condRefQuestion &&
+    condRefQuestion.type === "multiple_choice" &&
+    Array.isArray(condRefQuestion.options) &&
+    condRefQuestion.options.length > 0 &&
+    condValueOptions.length === 0;
 
   const showSurveyPurposeStep =
     hydrationComplete &&
@@ -1570,6 +1858,23 @@ function Builder() {
                           Conditional
                         </span>
                       ) : null}
+                      {hasSpanishTranslation(q) ? (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            padding: "3px 10px",
+                            borderRadius: "999px",
+                            fontFamily: dmSans,
+                            fontSize: "0.68rem",
+                            fontWeight: 600,
+                            backgroundColor: "#E0F2FE",
+                            color: "#075985",
+                          }}
+                          title="Includes Spanish translation"
+                        >
+                          ES
+                        </span>
+                      ) : null}
                     </div>
                     <p
                       style={{
@@ -1581,7 +1886,7 @@ function Builder() {
                         whiteSpace: "pre-wrap",
                       }}
                     >
-                      {q.text}
+                      {questionTextEn(q)}
                     </p>
                     {questionErrors[q.id] ? (
                       <p
@@ -1739,23 +2044,81 @@ function Builder() {
                 backgroundColor: "#FAF9F7",
               }}
             >
-              <label style={{ display: "block", marginBottom: "14px" }}>
+              <div style={{ marginBottom: "14px" }}>
                 <span style={labelStyle}>Question text</span>
-                <textarea
-                  required
-                  value={qText}
-                  onChange={(e) => {
-                    setQText(e.target.value);
-                    if (qTextError) setQTextError("");
-                  }}
-                  rows={3}
-                  style={{
-                    ...inputStyle,
-                    resize: "vertical",
-                    minHeight: "72px",
-                    borderColor: qTextError ? "#F87171" : "#A8D4AA",
-                  }}
-                />
+                {toolLanguages.map((lang) => {
+                  const isEn = lang === "en";
+                  return (
+                    <label
+                      key={lang}
+                      style={{ display: "block", marginBottom: "10px" }}
+                    >
+                      <span
+                        style={{
+                          display: "block",
+                          marginBottom: "4px",
+                          color: muted,
+                          fontFamily: dmSans,
+                          fontSize: "0.82rem",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {languageLabel(lang)}
+                        {isEn ? " (required)" : " (optional)"}
+                      </span>
+                      <textarea
+                        required={isEn}
+                        value={qTextByLang[lang] || ""}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setQTextByLang((prev) => ({
+                            ...prev,
+                            [lang]: value,
+                          }));
+                          if (isEn && qTextError) setQTextError("");
+                        }}
+                        rows={3}
+                        style={{
+                          ...inputStyle,
+                          resize: "vertical",
+                          minHeight: "72px",
+                          borderColor:
+                            isEn && qTextError ? "#F87171" : "#A8D4AA",
+                        }}
+                      />
+                      {!isEn && lang === "es" ? (
+                        <span
+                          style={{
+                            display: "block",
+                            marginTop: "4px",
+                            color: muted,
+                            fontFamily: dmSans,
+                            fontSize: "0.78rem",
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          Optional. Leave blank and this question appears in
+                          English on a Spanish form.
+                        </span>
+                      ) : !isEn ? (
+                        <span
+                          style={{
+                            display: "block",
+                            marginTop: "4px",
+                            color: muted,
+                            fontFamily: dmSans,
+                            fontSize: "0.78rem",
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          Optional. Leave blank and this question appears in
+                          English when the form is shown in{" "}
+                          {languageLabel(lang)}.
+                        </span>
+                      ) : null}
+                    </label>
+                  );
+                })}
                 {qTextError ? (
                   <span
                     style={{
@@ -1769,7 +2132,7 @@ function Builder() {
                     {qTextError}
                   </span>
                 ) : null}
-              </label>
+              </div>
               {formBlockMessage ? (
                 <p
                   style={{
@@ -1806,35 +2169,142 @@ function Builder() {
                 <div style={{ marginBottom: "14px" }}>
                   <span style={labelStyle}>Answer options</span>
                   {qOptions.length > 0 ? (
-                    <ul
+                    <div
                       style={{
-                        margin: "0 0 10px",
-                        paddingLeft: "20px",
-                        fontFamily: dmSans,
-                        fontSize: "0.9rem",
-                        color: bodyDark,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "12px",
+                        marginBottom: "12px",
                       }}
                     >
                       {qOptions.map((opt, i) => (
-                        <li key={`${i}-${opt}`}>{opt}</li>
+                        <div
+                          key={optionIdOf(opt) || `new-opt-${i}`}
+                          style={{
+                            padding: "12px",
+                            borderRadius: "8px",
+                            border: "1px solid #E5E7EB",
+                            backgroundColor: "#FFFFFF",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              marginBottom: "8px",
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontFamily: dmSans,
+                                fontSize: "0.8rem",
+                                fontWeight: 600,
+                                color: muted,
+                              }}
+                            >
+                              Option {i + 1}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removeMcOption(i)}
+                              style={{
+                                border: "none",
+                                background: "none",
+                                padding: 0,
+                                color: "#B91C1C",
+                                fontFamily: dmSans,
+                                fontSize: "0.78rem",
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                textDecoration: "underline",
+                              }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          {toolLanguages.map((lang) => (
+                            <label
+                              key={`${i}-${lang}`}
+                              style={{
+                                display: "block",
+                                marginBottom: "8px",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  display: "block",
+                                  marginBottom: "4px",
+                                  color: muted,
+                                  fontFamily: dmSans,
+                                  fontSize: "0.78rem",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {languageLabel(lang)}
+                                {lang === "en" ? " (required)" : " (optional)"}
+                              </span>
+                              <input
+                                type="text"
+                                value={(opt.label && opt.label[lang]) || ""}
+                                onChange={(e) =>
+                                  updateOptionLabel(i, lang, e.target.value)
+                                }
+                                placeholder={
+                                  lang === "en"
+                                    ? "English label"
+                                    : `${languageLabel(lang)} label`
+                                }
+                                style={inputStyle}
+                              />
+                              {lang === "es" ? (
+                                <span
+                                  style={{
+                                    display: "block",
+                                    marginTop: "4px",
+                                    color: muted,
+                                    fontFamily: dmSans,
+                                    fontSize: "0.72rem",
+                                    lineHeight: 1.35,
+                                  }}
+                                >
+                                  Optional. Leave blank and this option appears
+                                  in English on a Spanish form.
+                                </span>
+                              ) : null}
+                            </label>
+                          ))}
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   ) : null}
                   <div
                     style={{
                       display: "flex",
-                      flexWrap: "wrap",
+                      flexDirection: "column",
                       gap: "8px",
-                      alignItems: "center",
                     }}
                   >
-                    <input
-                      type="text"
-                      value={newOptionText}
-                      onChange={(e) => setNewOptionText(e.target.value)}
-                      placeholder="Option text"
-                      style={{ ...inputStyle, flex: "1 1 160px" }}
-                    />
+                    {toolLanguages.map((lang) => (
+                      <input
+                        key={`new-${lang}`}
+                        type="text"
+                        value={newOptionByLang[lang] || ""}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setNewOptionByLang((prev) => ({
+                            ...prev,
+                            [lang]: value,
+                          }));
+                        }}
+                        placeholder={
+                          lang === "en"
+                            ? "New option (English, required)"
+                            : `New option (${languageLabel(lang)}, optional)`
+                        }
+                        style={inputStyle}
+                      />
+                    ))}
                     <button
                       type="button"
                       onClick={addMcOption}
@@ -1848,6 +2318,7 @@ function Builder() {
                         fontFamily: dmSans,
                         fontWeight: 600,
                         fontSize: "0.85rem",
+                        alignSelf: "flex-start",
                       }}
                     >
                       Add option
@@ -1931,13 +2402,16 @@ function Builder() {
                           style={inputStyle}
                         >
                           <option value="">No condition</option>
-                          {priorQuestionsForForm.map((pq) => (
-                            <option key={pq.id} value={pq.id}>
-                              {pq.text.length > 80
-                                ? `${pq.text.slice(0, 80)}...`
-                                : pq.text}
-                            </option>
-                          ))}
+                          {priorQuestionsForForm.map((pq) => {
+                            const label = questionTextEn(pq);
+                            return (
+                              <option key={pq.id} value={pq.id}>
+                                {label.length > 80
+                                  ? `${label.slice(0, 80)}...`
+                                  : label}
+                              </option>
+                            );
+                          })}
                         </select>
                       </label>
                       {qCondRefId ? (
@@ -1968,15 +2442,30 @@ function Builder() {
                           qCondOp === "not_equals" ? (
                             <label style={{ display: "block" }}>
                               <span style={labelStyle}>Value</span>
+                              {condOptionsNeedSave ? (
+                                <p
+                                  style={{
+                                    margin: "0 0 8px",
+                                    color: muted,
+                                    fontFamily: dmSans,
+                                    fontSize: "0.82rem",
+                                    lineHeight: 1.4,
+                                  }}
+                                >
+                                  Save your draft first so option ids are
+                                  assigned. Then you can set this condition.
+                                </p>
+                              ) : null}
                               <select
                                 value={qCondValue}
                                 onChange={(e) => setQCondValue(e.target.value)}
                                 style={inputStyle}
+                                disabled={condValueOptions.length === 0}
                               >
                                 <option value="">Select an option</option>
                                 {condValueOptions.map((opt) => (
-                                  <option key={opt} value={opt}>
-                                    {opt}
+                                  <option key={opt.id} value={opt.id}>
+                                    {opt.label}
                                   </option>
                                 ))}
                               </select>

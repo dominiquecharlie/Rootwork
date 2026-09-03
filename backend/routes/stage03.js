@@ -12,6 +12,8 @@ const {
   agent09b_questionSuggestions,
 } = require("../agents/agent09b_questionSuggestions");
 const {
+  isBlankQuestionText,
+  isUsableOption,
   normalizeQuestions,
   validateQuestionLogic,
 } = require("../lib/questionLogic");
@@ -928,19 +930,15 @@ router.post("/save-tool", requireStarterTier, async (req, res) => {
     if (Array.isArray(b.questions)) {
       for (let i = 0; i < b.questions.length; i++) {
         const rawQ = b.questions[i] || {};
-        const rawText =
-          typeof rawQ.text === "string"
-            ? rawQ.text
-            : typeof rawQ.questionText === "string"
-              ? rawQ.questionText
-              : "";
-        if (!String(rawText).trim()) {
-          const qid =
-            typeof rawQ.id === "string" && rawQ.id.trim()
-              ? rawQ.id.trim()
-              : `index-${i}`;
+        const qid =
+          typeof rawQ.id === "string" && rawQ.id.trim()
+            ? rawQ.id.trim()
+            : `index-${i}`;
+
+        // text may be a bare string (legacy) or { en, ... } (new shape).
+        if (isBlankQuestionText(rawQ)) {
           return res.status(400).json({
-            error: "Question text is required.",
+            error: "Question text cannot be empty.",
             errors: [
               {
                 question_id: qid,
@@ -948,6 +946,28 @@ router.post("/save-tool", requireStarterTier, async (req, res) => {
               },
             ],
           });
+        }
+
+        const rawType = String(rawQ.type || rawQ.questionType || "")
+          .toLowerCase()
+          .trim();
+        if (
+          rawType === "multiple_choice" &&
+          Array.isArray(rawQ.options)
+        ) {
+          for (let oi = 0; oi < rawQ.options.length; oi++) {
+            if (!isUsableOption(rawQ.options[oi])) {
+              return res.status(400).json({
+                error: "Question option is invalid.",
+                errors: [
+                  {
+                    question_id: qid,
+                    error: `Option at position ${oi} must include a non-empty en label.`,
+                  },
+                ],
+              });
+            }
+          }
         }
       }
     }

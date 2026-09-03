@@ -34,6 +34,22 @@ const st = (id, text, extra = {}) => ({
   ...extra,
 });
 
+const mcNew = (id, textEn, options) => ({
+  id,
+  text: { en: textEn },
+  type: "multiple_choice",
+  required: true,
+  options,
+});
+
+const stNew = (id, textEn, extra = {}) => ({
+  id,
+  text: { en: textEn },
+  type: "short_text",
+  required: true,
+  ...extra,
+});
+
 // Mirrors what POST /save-tool does: normalize, then validate.
 function save(questions) {
   const normalized = normalizeQuestions(questions);
@@ -114,13 +130,14 @@ test("questions with no conditions are valid", () => {
 });
 
 test("equals against an earlier multiple_choice question is valid", () => {
-  const { errors } = save([
+  const { normalized, errors } = save([
     mc("a", "Did you attend?", ["Yes", "No"]),
     st("b", "Why not?", {
       display_if: { question_id: "a", operator: "equals", value: "No" },
     }),
   ]);
   assert.strictEqual(errors.length, 0, errorText(errors));
+  assert.strictEqual(normalized[1].display_if.value, "a-opt-1");
 });
 
 test("answered works against any earlier question type", () => {
@@ -132,13 +149,14 @@ test("answered works against any earlier question type", () => {
 });
 
 test("a value with surrounding whitespace still matches its option", () => {
-  const { errors } = save([
+  const { normalized, errors } = save([
     mc("a", "A", ["Yes", "No"]),
     st("b", "B", {
       display_if: { question_id: "a", operator: "equals", value: "  No  " },
     }),
   ]);
   assert.strictEqual(errors.length, 0, errorText(errors));
+  assert.strictEqual(normalized[1].display_if.value, "a-opt-1");
 });
 
 test("a valid condition survives the save and hydrate round trip", () => {
@@ -152,7 +170,7 @@ test("a valid condition survives the save and hydrate round trip", () => {
   assert.deepStrictEqual(again[1].display_if, {
     question_id: "a",
     operator: "equals",
-    value: "Yes",
+    value: "a-opt-0",
   });
 });
 
@@ -254,4 +272,159 @@ test("blank text questions are dropped by normalize, which breaks references", (
   ]);
   assert.strictEqual(normalized.length, 1, "the blank question is silently removed");
   assert.ok(errors.length > 0, "the surviving question now has a broken reference");
+});
+
+// ---------------------------------------------------------------------------
+// multilingual shape: legacy migration, idempotence, validation
+// ---------------------------------------------------------------------------
+
+test("legacy string options and label-matched display_if migrate to option ids", () => {
+  const { normalized, errors } = save([
+    mc("a", "Did you attend?", ["Yes", "No"]),
+    st("b", "Why not?", {
+      display_if: { question_id: "a", operator: "equals", value: "No" },
+    }),
+  ]);
+  assert.strictEqual(errors.length, 0, errorText(errors));
+  assert.deepStrictEqual(normalized[0].text, { en: "Did you attend?" });
+  assert.deepStrictEqual(normalized[0].options, [
+    { id: "a-opt-0", label: { en: "Yes" } },
+    { id: "a-opt-1", label: { en: "No" } },
+  ]);
+  assert.deepStrictEqual(normalized[1].text, { en: "Why not?" });
+  assert.deepStrictEqual(normalized[1].display_if, {
+    question_id: "a",
+    operator: "equals",
+    value: "a-opt-1",
+  });
+});
+
+test("normalize is idempotent for legacy, new-shape, and mixed input", () => {
+  const legacy = [
+    mc("a", "Attend?", ["Yes", "No"]),
+    st("b", "Why?", {
+      display_if: { question_id: "a", operator: "equals", value: "No" },
+    }),
+  ];
+  const newShape = [
+    mcNew("a", "Attend?", [
+      { id: "a-opt-0", label: { en: "Yes", es: "Sí" } },
+      { id: "a-opt-1", label: { en: "No" } },
+    ]),
+    stNew("b", "Why?", {
+      display_if: {
+        question_id: "a",
+        operator: "equals",
+        value: "a-opt-1",
+      },
+    }),
+  ];
+  const mixed = [
+    mc("a", "Attend?", [
+      { id: "custom-yes", label: { en: "Yes" } },
+      "No",
+    ]),
+    stNew("b", "Why?", {
+      display_if: { question_id: "a", operator: "equals", value: "No" },
+    }),
+  ];
+
+  for (const [label, input] of [
+    ["legacy", legacy],
+    ["new-shape", newShape],
+    ["mixed", mixed],
+  ]) {
+    const once = normalizeQuestions(input);
+    const twice = normalizeQuestions(once);
+    assert.deepStrictEqual(twice, once, `${label} must be idempotent`);
+  }
+});
+
+test("duplicate option ids are rejected", () => {
+  const { errors } = save([
+    mcNew("a", "A", [
+      { id: "dup", label: { en: "Yes" } },
+      { id: "dup", label: { en: "No" } },
+    ]),
+  ]);
+  assert.ok(errors.length > 0, "expected duplicate option id error");
+  assert.ok(
+    errors.some((e) => e.question_id === "a" && /Duplicate option id/.test(e.error)),
+    errorText(errors)
+  );
+});
+
+test("option label missing en is rejected", () => {
+  const { errors } = save([
+    mcNew("a", "A", [{ id: "a-opt-0", label: { es: "Sí" } }]),
+  ]);
+  assert.ok(errors.length > 0, "expected missing en label error");
+  assert.ok(
+    errors.some(
+      (e) => e.question_id === "a" && /non-empty en label/.test(e.error)
+    ),
+    errorText(errors)
+  );
+});
+
+test("question text missing en is rejected", () => {
+  const { errors } = save([
+    {
+      id: "a",
+      text: { es: "Hola" },
+      type: "short_text",
+      required: true,
+    },
+  ]);
+  assert.ok(errors.length > 0, "expected missing en text error");
+  assert.ok(
+    errors.some(
+      (e) => e.question_id === "a" && /non-empty en value/.test(e.error)
+    ),
+    errorText(errors)
+  );
+});
+
+test("new-shape display_if.value pointing at a label is rejected", () => {
+  const { normalized, errors } = save([
+    mcNew("a", "A", [
+      { id: "a-opt-0", label: { en: "Yes" } },
+      { id: "a-opt-1", label: { en: "No" } },
+    ]),
+    stNew("b", "B", {
+      display_if: { question_id: "a", operator: "equals", value: "Yes" },
+    }),
+  ]);
+  assert.strictEqual(
+    normalized[1].display_if.value,
+    "Yes",
+    "label must not be remapped on new-shape input"
+  );
+  assert.ok(errors.length > 0, "expected rejection for label-as-value");
+  assert.ok(
+    errors.some(
+      (e) =>
+        e.question_id === "b" && /option id on question "a"/.test(e.error)
+    ),
+    errorText(errors)
+  );
+});
+
+test("legacy display_if.value matching no option label fails on the dependent question", () => {
+  const { normalized, errors } = save([
+    mc("a", "A", ["Yes", "No"]),
+    st("b", "B", {
+      display_if: { question_id: "a", operator: "equals", value: "Maybe" },
+    }),
+  ]);
+  assert.ok(
+    normalized[1].display_if,
+    "broken condition must not be silently dropped"
+  );
+  assert.strictEqual(normalized[1].display_if.value, "Maybe");
+  assert.ok(errors.length > 0, "expected validation failure");
+  assert.ok(
+    errors.some((e) => e.question_id === "b"),
+    `expected error on question b, got: ${errorText(errors)}`
+  );
 });

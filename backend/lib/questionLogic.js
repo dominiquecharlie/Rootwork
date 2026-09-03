@@ -18,6 +18,74 @@ const DISPLAY_IF_OPS = new Set([
   "not_answered",
 ]);
 
+// Deterministic option id from question id and position in the input options array.
+function derivedOptionId(questionId, optIdx) {
+  return `${questionId}-opt-${optIdx}`;
+}
+
+// Open-ended language keys. Never assume only en/es.
+function normalizeLocalizedMap(raw, stringFallback) {
+  if (typeof raw === "string") {
+    const en = raw.trim();
+    return en ? { en } : null;
+  }
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const out = {};
+    for (const [lang, val] of Object.entries(raw)) {
+      if (typeof lang !== "string") continue;
+      const key = lang.trim();
+      if (!key || typeof val !== "string") continue;
+      const trimmed = val.trim();
+      if (trimmed) out[key] = trimmed;
+    }
+    return Object.keys(out).length > 0 ? out : null;
+  }
+  if (typeof stringFallback === "string" && stringFallback.trim()) {
+    return { en: stringFallback.trim() };
+  }
+  return null;
+}
+
+function hasNonEmptyEn(localizedOrString) {
+  if (typeof localizedOrString === "string") {
+    return localizedOrString.trim().length > 0;
+  }
+  if (
+    localizedOrString &&
+    typeof localizedOrString === "object" &&
+    !Array.isArray(localizedOrString)
+  ) {
+    return (
+      typeof localizedOrString.en === "string" &&
+      localizedOrString.en.trim().length > 0
+    );
+  }
+  return false;
+}
+
+// Blank when text is neither a non-empty string nor an object with non-empty en.
+function isBlankQuestionText(rawQ) {
+  if (!rawQ || typeof rawQ !== "object") return true;
+  if (hasNonEmptyEn(rawQ.text)) return false;
+  if (typeof rawQ.questionText === "string" && rawQ.questionText.trim()) {
+    return false;
+  }
+  return true;
+}
+
+// An option is usable when it carries a non-empty English label (string or label.en).
+function isUsableOption(o) {
+  if (typeof o === "string") return o.trim().length > 0;
+  if (o && typeof o === "object" && !Array.isArray(o)) {
+    if (typeof o.label === "string") return o.label.trim().length > 0;
+    if (o.label && typeof o.label === "object" && !Array.isArray(o.label)) {
+      return typeof o.label.en === "string" && o.label.en.trim().length > 0;
+    }
+    return false;
+  }
+  return false;
+}
+
 function normalizeDisplayIf(raw) {
   if (raw == null || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
@@ -37,6 +105,70 @@ function normalizeDisplayIf(raw) {
     if (value) display_if.value = value;
   }
   return display_if;
+}
+
+// Legacy display_if.value held English option labels. Remap label.en -> option
+// id only when the referenced question still had bare string options in this
+// pass. New-shape input that points at a label is left alone so validation
+// rejects it. Match label.en only so a coincidental Spanish string cannot
+// resolve to the wrong option.
+function resolveDisplayIfValue(value, referencedQuestion, allowLabelRemap) {
+  if (
+    !value ||
+    !referencedQuestion ||
+    referencedQuestion.type !== "multiple_choice"
+  ) {
+    return value;
+  }
+  const opts = Array.isArray(referencedQuestion.options)
+    ? referencedQuestion.options
+    : [];
+
+  if (opts.some((o) => o && o.id === value)) return value;
+
+  if (!allowLabelRemap) return value;
+
+  for (const o of opts) {
+    if (!o || !o.label || typeof o.label !== "object") continue;
+    if (typeof o.label.en === "string" && o.label.en === value) {
+      return o.id;
+    }
+  }
+  return value;
+}
+
+function normalizeOptions(rawOptions, questionId) {
+  if (!Array.isArray(rawOptions)) return [];
+  const out = [];
+  for (let optIdx = 0; optIdx < rawOptions.length; optIdx++) {
+    const o = rawOptions[optIdx];
+
+    if (typeof o === "string") {
+      const label = normalizeLocalizedMap(o);
+      out.push({
+        id: derivedOptionId(questionId, optIdx),
+        label: label || {},
+      });
+      continue;
+    }
+
+    if (!o || typeof o !== "object" || Array.isArray(o)) {
+      out.push({
+        id: derivedOptionId(questionId, optIdx),
+        label: {},
+      });
+      continue;
+    }
+
+    const label = normalizeLocalizedMap(o.label) || {};
+    const id =
+      typeof o.id === "string" && o.id.trim()
+        ? o.id.trim()
+        : derivedOptionId(questionId, optIdx);
+
+    out.push({ id, label });
+  }
+  return out;
 }
 
 // Response submission will evaluate required only when a question is visible.
@@ -75,6 +207,42 @@ function validateQuestionLogic(questions) {
     const q = questions[i];
     const qid =
       typeof q?.id === "string" && q.id.trim() ? q.id.trim() : `index-${i}`;
+
+    if (!hasNonEmptyEn(q?.text)) {
+      errors.push({
+        question_id: qid,
+        error: "Question text must include a non-empty en value.",
+      });
+    }
+
+    if (q?.type === "multiple_choice") {
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const seenOptIds = new Set();
+      for (let oi = 0; oi < opts.length; oi++) {
+        const opt = opts[oi] || {};
+        const oid =
+          typeof opt.id === "string" && opt.id.trim() ? opt.id.trim() : "";
+        if (!oid) {
+          errors.push({
+            question_id: qid,
+            error: `Option at position ${oi} must have a non-empty id.`,
+          });
+        } else if (seenOptIds.has(oid)) {
+          errors.push({
+            question_id: qid,
+            error: `Duplicate option id "${oid}". Each option id must be unique within a question.`,
+          });
+        } else {
+          seenOptIds.add(oid);
+        }
+        if (!hasNonEmptyEn(opt.label)) {
+          errors.push({
+            question_id: qid,
+            error: `Option at position ${oi} must include a non-empty en label.`,
+          });
+        }
+      }
+    }
 
     const raw = q?.display_if;
     if (raw == null) {
@@ -138,10 +306,13 @@ function validateQuestionLogic(questions) {
           });
         } else if (value) {
           const opts = Array.isArray(target.options) ? target.options : [];
-          if (!opts.includes(value)) {
+          const ids = opts
+            .map((o) => (typeof o?.id === "string" ? o.id : ""))
+            .filter(Boolean);
+          if (!ids.includes(value)) {
             errors.push({
               question_id: qid,
-              error: `display_if.value must exactly match an option on question "${refId}".`,
+              error: `display_if.value must exactly match an option id on question "${refId}".`,
             });
           }
         }
@@ -161,64 +332,89 @@ function validateQuestionLogic(questions) {
   return errors;
 }
 
+function optionsWereLegacyStrings(rawOptions) {
+  return (
+    Array.isArray(rawOptions) && rawOptions.some((o) => typeof o === "string")
+  );
+}
+
 function normalizeQuestions(input) {
   if (!Array.isArray(input)) return [];
-  return input
-    .map((q, idx) => {
-      const id =
-        typeof q.id === "string" && q.id.trim()
-          ? q.id.trim()
-          : `q-${idx}-${Date.now()}`;
-      const text =
-        typeof q.text === "string"
-          ? q.text
-          : typeof q.questionText === "string"
-            ? q.questionText
-            : "";
-      let type = (q.type || q.questionType || "short_text")
-        .toLowerCase()
-        .trim();
-      if (!ALLOWED_Q_TYPES.has(type)) type = "short_text";
-      const required = Boolean(q.required);
-      const options = Array.isArray(q.options)
-        ? q.options
-            .map((o) => String(o ?? "").trim())
-            .filter(Boolean)
-        : [];
-      const row = {
-        id,
-        text: String(text).trim(),
-        type,
-        required,
-      };
-      if (type === "multiple_choice") {
-        row.options = options;
+  const normalized = [];
+  const legacyOptionsById = new Map();
+
+  for (let idx = 0; idx < input.length; idx++) {
+    const q = input[idx] || {};
+    // Fallback q-${idx} can collide with a real question whose id is literally
+    // "q-2". validateQuestionLogic reports it as a duplicate id. Acceptable.
+    const id =
+      typeof q.id === "string" && q.id.trim() ? q.id.trim() : `q-${idx}`;
+
+    const text = normalizeLocalizedMap(
+      q.text,
+      typeof q.questionText === "string" ? q.questionText : undefined
+    );
+    if (!text) continue;
+
+    let type = (q.type || q.questionType || "short_text").toLowerCase().trim();
+    if (!ALLOWED_Q_TYPES.has(type)) type = "short_text";
+
+    const row = {
+      id,
+      text,
+      type,
+      required: Boolean(q.required),
+    };
+
+    const legacyOpts = optionsWereLegacyStrings(q.options);
+    if (type === "multiple_choice") {
+      row.options = normalizeOptions(q.options, id);
+    }
+
+    const src =
+      typeof q.source === "string" ? q.source.toLowerCase().trim() : "";
+    if (src === "ai" || src === "user") {
+      row.source = src;
+    }
+    const rationale =
+      typeof q.rationale === "string" ? q.rationale.trim() : "";
+    if (rationale) {
+      row.rationale = rationale;
+    }
+
+    let display_if = normalizeDisplayIf(q.display_if);
+    if (display_if) {
+      const earlier = normalized.find((x) => x.id === display_if.question_id);
+      if (display_if.value && earlier) {
+        display_if = {
+          ...display_if,
+          value: resolveDisplayIfValue(
+            display_if.value,
+            earlier,
+            Boolean(legacyOptionsById.get(display_if.question_id))
+          ),
+        };
       }
-      const src =
-        typeof q.source === "string"
-          ? q.source.toLowerCase().trim()
-          : "";
-      if (src === "ai" || src === "user") {
-        row.source = src;
-      }
-      const rationale =
-        typeof q.rationale === "string" ? q.rationale.trim() : "";
-      if (rationale) {
-        row.rationale = rationale;
-      }
-      const display_if = normalizeDisplayIf(q.display_if);
-      if (display_if != null) {
-        row.display_if = display_if;
-      }
-      return row;
-    })
-    .filter((q) => q.text.length > 0);
+      row.display_if = display_if;
+    }
+
+    legacyOptionsById.set(id, legacyOpts);
+    normalized.push(row);
+  }
+
+  return normalized;
 }
 
 module.exports = {
   ALLOWED_Q_TYPES,
   DISPLAY_IF_OPS,
+  derivedOptionId,
+  hasNonEmptyEn,
+  isBlankQuestionText,
+  isUsableOption,
   normalizeDisplayIf,
+  normalizeLocalizedMap,
   normalizeQuestions,
+  resolveDisplayIfValue,
   validateQuestionLogic,
 };
