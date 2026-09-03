@@ -521,6 +521,35 @@ create trigger collection_tools_set_updated_at
   before update on public.collection_tools
   for each row execute function public.handle_updated_at();
 
+alter table public.collection_tools
+  add column if not exists launched_at timestamptz;
+
+-- Stage 03 gap review (persisted AI output for Collect page)
+create table if not exists public.collection_gap_reviews (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  payload jsonb not null default '{}'::jsonb,
+  created_by uuid references auth.users(id),
+  created_at timestamptz not null default now()
+);
+
+alter table public.collection_gap_reviews enable row level security;
+
+create policy "collection_gap_reviews_read"
+  on public.collection_gap_reviews
+  for select
+  using (public.is_org_member(org_id));
+
+create policy "collection_gap_reviews_write"
+  on public.collection_gap_reviews
+  for insert
+  with check (public.is_org_member(org_id));
+
+create policy "collection_gap_reviews_delete"
+  on public.collection_gap_reviews
+  for delete
+  using (public.is_org_member(org_id));
+
 -- Stage 03 responses
 create table if not exists public.collection_responses (
   id uuid primary key default gen_random_uuid(),
@@ -702,6 +731,8 @@ create index if not exists community_engagements_org_id_idx on public.community_
 create index if not exists community_voice_records_org_engagement_idx on public.community_voice_records (org_id, engagement_id);
 create index if not exists program_design_reconciliations_org_id_idx on public.program_design_reconciliations (org_id);
 create index if not exists collection_tools_org_id_idx on public.collection_tools (org_id);
+create index if not exists collection_gap_reviews_org_created_idx
+  on public.collection_gap_reviews (org_id, created_at desc);
 create index if not exists collection_responses_org_tool_idx on public.collection_responses (org_id, collection_tool_id);
 create index if not exists stage_progress_org_stage_idx on public.stage_progress (org_id, stage);
 create index if not exists claude_interactions_org_created_idx on public.claude_interactions (org_id, created_at);

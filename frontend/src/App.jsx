@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Route, Routes } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "./lib/supabaseClient";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -22,26 +22,29 @@ import DocumentEngagement from "./pages/stage02/DocumentEngagement";
 import CommunityVoice from "./pages/stage02/CommunityVoice";
 import Reconcile from "./pages/stage02b/Reconcile";
 import Collect from "./pages/stage03/Collect";
+import Gaps from "./pages/stage03/Gaps";
+import Tools from "./pages/stage03/Tools";
+import Builder from "./pages/stage03/Builder";
 
-function RootRoute() {
-  const [isChecking, setIsChecking] = useState(true);
+function LandingEntry() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    async function checkSession() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      setIsAuthenticated(Boolean(session?.access_token));
-      setIsChecking(false);
-    }
-
-    checkSession();
+    let cancelled = false;
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        if (!cancelled) setIsAuthenticated(Boolean(session?.access_token));
+      })
+      .catch(() => {
+        /* still show marketing; CTAs default to signed-out */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  if (isChecking) return null;
-  if (isAuthenticated) return <Navigate to="/dashboard" replace />;
-  return <Landing />;
+  return <Landing isAuthenticated={isAuthenticated} />;
 }
 
 function App() {
@@ -195,7 +198,32 @@ function App() {
           </ProtectedRoute>
         }
       />
-      <Route path="/" element={<RootRoute />} />
+      <Route
+        path="/stage03/gaps"
+        element={
+          <ProtectedRoute>
+            <Gaps />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage03/tools"
+        element={
+          <ProtectedRoute>
+            <Tools />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage03/builder"
+        element={
+          <ProtectedRoute>
+            <Builder />
+          </ProtectedRoute>
+        }
+      />
+      <Route path="/" element={<LandingEntry />} />
+      <Route path="/landing" element={<LandingEntry />} />
     </Routes>
   );
 }

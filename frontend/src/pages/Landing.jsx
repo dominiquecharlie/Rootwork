@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 const tiers = [
@@ -101,9 +101,15 @@ const accordionItems = [
   },
 ];
 
-function Landing() {
+function Landing({ isAuthenticated = false }) {
   const navigate = useNavigate();
   const [openAccordion, setOpenAccordion] = useState(0);
+  const [howItWorksActiveStage, setHowItWorksActiveStage] = useState(1);
+  const howStage1Ref = useRef(null);
+  const howStage2Ref = useRef(null);
+  const howStage3Ref = useRef(null);
+  const howStage4Ref = useRef(null);
+  const howStage5Ref = useRef(null);
 
   useEffect(() => {
     const previous = document.documentElement.style.scrollBehavior;
@@ -112,6 +118,40 @@ function Landing() {
       document.documentElement.style.scrollBehavior = previous;
     };
   }, []);
+
+  useEffect(() => {
+    let observer;
+    try {
+      observer = new IntersectionObserver(
+        (entries) => {
+          let best = null;
+          let bestRatio = 0;
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const stage = Number(entry.target.getAttribute("data-how-stage"));
+            if (!Number.isFinite(stage)) continue;
+            if (entry.intersectionRatio > bestRatio) {
+              bestRatio = entry.intersectionRatio;
+              best = stage;
+            }
+          }
+          if (best != null) setHowItWorksActiveStage(best);
+        },
+        { root: null, rootMargin: "-12% 0px -40% 0px", threshold: [0.08, 0.15, 0.25, 0.4, 0.6] }
+      );
+    } catch {
+      return undefined;
+    }
+    const stageEls = [
+      howStage1Ref.current,
+      howStage2Ref.current,
+      howStage3Ref.current,
+      howStage4Ref.current,
+      howStage5Ref.current,
+    ].filter(Boolean);
+    for (const el of stageEls) observer.observe(el);
+    return () => observer.disconnect();
+  }, [howStage1Ref, howStage2Ref, howStage3Ref, howStage4Ref, howStage5Ref]);
 
   return (
     <main style={{ backgroundColor: "#FAF9F7", color: "#2C2C2C" }}>
@@ -153,6 +193,30 @@ function Landing() {
             .landing-hero-heading {
               font-size: 2rem !important;
               line-height: 1.25 !important;
+            }
+            .how-org-bar {
+              flex-direction: column;
+              align-items: flex-start !important;
+              gap: 16px;
+            }
+            .how-org-bar-badge-wrap {
+              align-self: flex-start;
+            }
+          }
+          .how-columns-3 {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 20px;
+          }
+          .how-grid-2x2 {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+          }
+          @media (max-width: 767px) {
+            .how-columns-3,
+            .how-grid-2x2 {
+              grid-template-columns: 1fr;
             }
           }
         `}
@@ -217,7 +281,7 @@ function Landing() {
             </a>
             <button
               type="button"
-              onClick={() => navigate("/onboarding")}
+              onClick={() => navigate(isAuthenticated ? "/dashboard" : "/onboarding")}
               style={{
                 border: "none",
                 color: "#FFFFFF",
@@ -230,7 +294,7 @@ function Landing() {
                 cursor: "pointer",
               }}
             >
-              Create account
+              {isAuthenticated ? "Go to dashboard" : "Create account"}
             </button>
           </div>
         </div>
@@ -280,7 +344,7 @@ function Landing() {
           >
             <button
               type="button"
-              onClick={() => navigate("/onboarding")}
+              onClick={() => navigate(isAuthenticated ? "/dashboard" : "/onboarding")}
               style={{
                 border: "none",
                 borderRadius: "8px",
@@ -292,10 +356,10 @@ function Landing() {
                 cursor: "pointer",
               }}
             >
-              Create a free account
+              {isAuthenticated ? "Go to dashboard" : "Create a free account"}
             </button>
             <a
-              href="#what-is-rootwork"
+              href="#how-it-works"
               style={{
                 border: "1px solid #FFFFFF",
                 borderRadius: "8px",
@@ -509,6 +573,822 @@ function Landing() {
                 </ul>
               </article>
             ))}
+          </div>
+          <p
+            style={{
+              margin: "28px 0 0",
+              textAlign: "center",
+              fontFamily: '"DM Sans", system-ui, sans-serif',
+              fontSize: "0.95rem",
+            }}
+          >
+            <a
+              href="#how-it-works"
+              style={{
+                color: "#2D6A2F",
+                fontWeight: 700,
+                textDecoration: "underline",
+                textUnderlineOffset: "3px",
+              }}
+            >
+              Example walkthrough: Keep Austin Healthy across all five stages
+            </a>
+          </p>
+        </div>
+      </section>
+
+      <section
+        id="how-it-works"
+        style={{
+          scrollMarginTop: "88px",
+          backgroundColor: "#EEF5EE",
+          borderTop: "1px solid #A8D4AA",
+          borderBottom: "1px solid #A8D4AA",
+          padding: "80px 0",
+        }}
+      >
+        <div className="landing-container">
+          <h2
+            style={{
+              margin: "0 0 16px",
+              textAlign: "center",
+              color: "#2D6A2F",
+              fontFamily: "Georgia, serif",
+              fontWeight: 700,
+              fontSize: "2rem",
+            }}
+          >
+            See how it works
+          </h2>
+          <p
+            style={{
+              margin: "0 auto 40px",
+              maxWidth: "600px",
+              textAlign: "center",
+              color: "#6B7280",
+              fontFamily: '"DM Sans", system-ui, sans-serif',
+              fontSize: "1.02rem",
+              lineHeight: 1.6,
+            }}
+          >
+            Follow Keep Austin Healthy through all five stages of Rootwork. A real neighborhood health
+            organization. A real program.
+          </p>
+
+          <div
+            className="how-org-bar"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "20px",
+              backgroundColor: "#1B3A2D",
+              padding: "20px 32px",
+              borderRadius: "8px",
+              marginBottom: "40px",
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 700,
+                  color: "#FFFFFF",
+                  fontSize: "1.1rem",
+                }}
+              >
+                Keep Austin Healthy
+              </div>
+              <div
+                style={{
+                  marginTop: "6px",
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  color: "#A8D4AA",
+                  fontSize: "0.88rem",
+                  lineHeight: 1.45,
+                }}
+              >
+                Program: Neighborhood Walks in underserved communities
+              </div>
+            </div>
+            <div className="how-org-bar-badge-wrap">
+              <span
+                style={{
+                  display: "inline-block",
+                  border: "1px solid #FFFFFF",
+                  color: "#FFFFFF",
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 700,
+                  fontSize: "0.78rem",
+                  letterSpacing: "0.06em",
+                  padding: "8px 14px",
+                  borderRadius: "6px",
+                }}
+              >
+                {howItWorksActiveStage <= 2 ? "FREE TIER" : "PAID TIER"}
+              </span>
+            </div>
+          </div>
+
+          <article
+            ref={howStage1Ref}
+            data-how-stage="1"
+            style={{
+              backgroundColor: "#FFFFFF",
+              border: "1px solid #A8D4AA",
+              borderRadius: "12px",
+              padding: "28px",
+              marginBottom: "24px",
+              borderLeft: "4px solid #2D6A2F",
+              boxSizing: "border-box",
+            }}
+          >
+            <div
+              style={{
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                fontWeight: 700,
+                fontVariant: "small-caps",
+                letterSpacing: "0.08em",
+                color: "#6B7280",
+                fontSize: "0.82rem",
+                marginBottom: "6px",
+              }}
+            >
+              STAGE 01
+            </div>
+            <h3
+              style={{
+                margin: "0 0 20px",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
+                color: "#2D6A2F",
+                fontSize: "1.35rem",
+              }}
+            >
+              Onboard
+            </h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <div
+                  style={{
+                    fontFamily: "Georgia, serif",
+                    fontWeight: 700,
+                    color: "#4A8C63",
+                    fontSize: "0.98rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Mission framing
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.95rem",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  Rootwork prompts KAH to articulate who is most affected, what health means in their
+                  specific zip codes, and what success looks like before any program activity begins.
+                </p>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: "Georgia, serif",
+                    fontWeight: 700,
+                    color: "#4A8C63",
+                    fontSize: "0.98rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Stakeholder mapping
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.95rem",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  The platform walks them through identifying community members, partner orgs, city
+                  agencies, and funders and their different relationships to the program.
+                </p>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: "Georgia, serif",
+                    fontWeight: 700,
+                    color: "#4A8C63",
+                    fontSize: "0.98rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Program design overview
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.95rem",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  KAH documents the neighborhood walk model: routes, frequency, who leads, what
+                  participation looks like, and what they are hoping to change.
+                </p>
+              </div>
+            </div>
+          </article>
+
+          <article
+            ref={howStage2Ref}
+            data-how-stage="2"
+            style={{
+              backgroundColor: "#FFFFFF",
+              border: "1px solid #A8D4AA",
+              borderRadius: "12px",
+              padding: "28px",
+              marginBottom: "24px",
+              borderLeft: "4px solid #2D6A2F",
+              boxSizing: "border-box",
+            }}
+          >
+            <div
+              style={{
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                fontWeight: 700,
+                fontVariant: "small-caps",
+                letterSpacing: "0.08em",
+                color: "#6B7280",
+                fontSize: "0.82rem",
+                marginBottom: "6px",
+              }}
+            >
+              STAGE 02
+            </div>
+            <h3
+              style={{
+                margin: "0 0 16px",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
+                color: "#2D6A2F",
+                fontSize: "1.35rem",
+              }}
+            >
+              Listen
+            </h3>
+            <div
+              style={{
+                backgroundColor: "#FEF3C7",
+                border: "1px solid #F59E0B",
+                borderRadius: "8px",
+                padding: "16px",
+                marginBottom: "16px",
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 700,
+                  color: "#92400E",
+                  fontSize: "0.85rem",
+                  marginBottom: "8px",
+                }}
+              >
+                HARD STOP
+              </div>
+              <p
+                style={{
+                  margin: 0,
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  color: "#78350F",
+                  fontSize: "0.92rem",
+                  lineHeight: 1.55,
+                }}
+              >
+                Rootwork blocks Stage 03 access. KAH cannot proceed to data collection until community
+                input is on record. Not summarized. On record.
+              </p>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <div>
+                <div
+                  style={{
+                    fontFamily: "Georgia, serif",
+                    fontWeight: 700,
+                    color: "#4A8C63",
+                    fontSize: "0.98rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  What KAH documents
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.95rem",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  Conversations with residents in East Austin and Southeast Austin about what they want
+                  from neighborhood walks: safety, routes, language access, childcare.
+                </p>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: "Georgia, serif",
+                    fontWeight: 700,
+                    color: "#4A8C63",
+                    fontSize: "0.98rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  What gets captured
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.95rem",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  Resident priorities. Concerns. Who was in the room. Who was not and why. This
+                  documentation travels through every subsequent stage.
+                </p>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: "Georgia, serif",
+                    fontWeight: 700,
+                    color: "#4A8C63",
+                    fontSize: "0.98rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Unlock
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: "Georgia, serif",
+                    fontStyle: "italic",
+                    fontWeight: 400,
+                    color: "#2D6A2F",
+                    fontSize: "0.98rem",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  Once community voice is documented, Stage 03 unlocks.
+                </p>
+              </div>
+            </div>
+          </article>
+
+          <article
+            ref={howStage3Ref}
+            data-how-stage="3"
+            style={{
+              backgroundColor: "#FFFFFF",
+              border: "1px solid #A8D4AA",
+              borderRadius: "12px",
+              padding: "28px",
+              marginBottom: "24px",
+              borderLeft: "4px solid #2D6A2F",
+              boxSizing: "border-box",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "8px",
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 700,
+                  fontVariant: "small-caps",
+                  letterSpacing: "0.08em",
+                  color: "#6B7280",
+                  fontSize: "0.82rem",
+                }}
+              >
+                STAGE 03
+              </div>
+              <span
+                style={{
+                  backgroundColor: "#2D6A2F",
+                  color: "#FFFFFF",
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 700,
+                  fontSize: "0.72rem",
+                  borderRadius: "999px",
+                  padding: "5px 10px",
+                }}
+              >
+                STARTER $49/mo
+              </span>
+            </div>
+            <h3
+              style={{
+                margin: "0 0 20px",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
+                color: "#2D6A2F",
+                fontSize: "1.35rem",
+              }}
+            >
+              Collect
+            </h3>
+            <div className="how-columns-3">
+              <div>
+                <div
+                  style={{
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontWeight: 700,
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    marginBottom: "10px",
+                  }}
+                >
+                  Honor community commitment
+                </div>
+                <ul
+                  style={{
+                    margin: 0,
+                    paddingLeft: "1.1rem",
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    lineHeight: 1.55,
+                  }}
+                >
+                  <li>Walk Experience Survey</li>
+                  <li>Attendance and Participation Log</li>
+                  <li>Community Feedback Loop</li>
+                </ul>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontWeight: 700,
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    marginBottom: "10px",
+                  }}
+                >
+                  Meet funding requirements
+                </div>
+                <ul
+                  style={{
+                    margin: 0,
+                    paddingLeft: "1.1rem",
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    lineHeight: 1.55,
+                  }}
+                >
+                  <li>Participant Demographic Form</li>
+                  <li>Program Activity Log</li>
+                  <li>Health Behavior Indicators</li>
+                </ul>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontWeight: 700,
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    marginBottom: "10px",
+                  }}
+                >
+                  Inform neighborhood policy
+                </div>
+                <ul
+                  style={{
+                    margin: 0,
+                    paddingLeft: "1.1rem",
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    lineHeight: 1.55,
+                  }}
+                >
+                  <li>Infrastructure Gap Tracker</li>
+                  <li>Resident Priority Map</li>
+                  <li>City Agency Share-Back Format</li>
+                </ul>
+              </div>
+            </div>
+            <p
+              style={{
+                margin: "20px 0 0",
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                fontStyle: "italic",
+                color: "#6B7280",
+                fontSize: "0.88rem",
+                lineHeight: 1.55,
+              }}
+            >
+              Every tool connects to what was documented in Stage 02. Community commitment shapes what
+              gets collected.
+            </p>
+          </article>
+
+          <article
+            ref={howStage4Ref}
+            data-how-stage="4"
+            style={{
+              backgroundColor: "#FFFFFF",
+              border: "1px solid #A8D4AA",
+              borderRadius: "12px",
+              padding: "28px",
+              marginBottom: "24px",
+              borderLeft: "4px solid #2D6A2F",
+              boxSizing: "border-box",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "8px",
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 700,
+                  fontVariant: "small-caps",
+                  letterSpacing: "0.08em",
+                  color: "#6B7280",
+                  fontSize: "0.82rem",
+                }}
+              >
+                STAGE 04
+              </div>
+              <span
+                style={{
+                  backgroundColor: "#2D6A2F",
+                  color: "#FFFFFF",
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 700,
+                  fontSize: "0.72rem",
+                  borderRadius: "999px",
+                  padding: "5px 10px",
+                }}
+              >
+                GROWTH $99/mo
+              </span>
+            </div>
+            <h3
+              style={{
+                margin: "0 0 20px",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
+                color: "#2D6A2F",
+                fontSize: "1.35rem",
+              }}
+            >
+              Analyze
+            </h3>
+            <div className="how-grid-2x2">
+              <div>
+                <div
+                  style={{
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontWeight: 700,
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Auto-dashboard
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    lineHeight: 1.55,
+                  }}
+                >
+                  Walk participation trends by zip code, week over week. Attendance by demographic.
+                  Satisfaction scores.
+                </p>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontWeight: 700,
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Funder-ready report
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    lineHeight: 1.55,
+                  }}
+                >
+                  One-click export for their city health grant. Demographic reach, health indicators,
+                  geographic distribution.
+                </p>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontWeight: 700,
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Community share-back
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    lineHeight: 1.55,
+                  }}
+                >
+                  Plain-language dashboard version designed to be printed or shared at the next walk.
+                </p>
+              </div>
+              <div>
+                <div
+                  style={{
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    fontWeight: 700,
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Trend flags
+                </div>
+                <p
+                  style={{
+                    margin: 0,
+                    fontFamily: '"DM Sans", system-ui, sans-serif',
+                    color: "#2C2C2C",
+                    fontSize: "0.9rem",
+                    lineHeight: 1.55,
+                  }}
+                >
+                  Rootwork surfaces anomalies and prompts KAH to investigate.
+                </p>
+              </div>
+            </div>
+          </article>
+
+          <article
+            ref={howStage5Ref}
+            data-how-stage="5"
+            style={{
+              backgroundColor: "#FFFFFF",
+              border: "1px solid #A8D4AA",
+              borderRadius: "12px",
+              padding: "28px",
+              marginBottom: "24px",
+              borderLeft: "4px solid #2D6A2F",
+              boxSizing: "border-box",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "baseline",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "8px",
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 700,
+                  fontVariant: "small-caps",
+                  letterSpacing: "0.08em",
+                  color: "#6B7280",
+                  fontSize: "0.82rem",
+                }}
+              >
+                STAGE 05
+              </div>
+              <span
+                style={{
+                  backgroundColor: "#2D6A2F",
+                  color: "#FFFFFF",
+                  fontFamily: '"DM Sans", system-ui, sans-serif',
+                  fontWeight: 700,
+                  fontSize: "0.72rem",
+                  borderRadius: "999px",
+                  padding: "5px 10px",
+                }}
+              >
+                ENTERPRISE $199/mo
+              </span>
+            </div>
+            <h3
+              style={{
+                margin: "0 0 16px",
+                fontFamily: "Georgia, serif",
+                fontWeight: 700,
+                color: "#2D6A2F",
+                fontSize: "1.35rem",
+              }}
+            >
+              Connect
+            </h3>
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: "1.1rem",
+                fontFamily: '"DM Sans", system-ui, sans-serif',
+                color: "#2C2C2C",
+                fontSize: "0.92rem",
+                lineHeight: 1.65,
+              }}
+            >
+              <li style={{ marginBottom: "12px" }}>
+                <strong>Matched funding:</strong> Rootwork surfaces grants and city contracts aligned to
+                KAH&apos;s program data: active transportation, neighborhood health equity, CDBG
+                infrastructure funding.
+              </li>
+              <li style={{ marginBottom: "12px" }}>
+                <strong>Peer org database:</strong> Connects KAH to organizations running similar programs
+                in Austin and comparable cities.
+              </li>
+              <li style={{ marginBottom: "12px" }}>
+                <strong>Policy input pathway:</strong> Generates a formatted summary for Austin Public
+                Health&apos;s community health needs assessment.
+              </li>
+              <li>
+                <strong>Consulting upgrade:</strong> If KAH needs a practitioner in the room, the pathway
+                to Intentional Data is one step away.
+              </li>
+            </ul>
+          </article>
+
+          <div
+            style={{
+              backgroundColor: "#1B3A2D",
+              padding: "24px",
+              textAlign: "center",
+            }}
+          >
+            <p
+              style={{
+                margin: 0,
+                fontFamily: "Georgia, serif",
+                fontStyle: "italic",
+                color: "#FFFFFF",
+                fontSize: "1.05rem",
+                lineHeight: 1.55,
+                maxWidth: "900px",
+                marginLeft: "auto",
+                marginRight: "auto",
+              }}
+            >
+              This is the full arc. Community voice shaped what got collected. Data shaped what got
+              funded. Funding shaped what got built in the neighborhood.
+            </p>
           </div>
         </div>
       </section>
