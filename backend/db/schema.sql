@@ -569,7 +569,7 @@ create policy "collection_responses_read"
   for select
   using (public.is_org_member(org_id));
 
-create policy "collection_responses_write"
+create policy "collection_responses_insert"
   on public.collection_responses
   for insert
   with check (public.is_org_member(org_id));
@@ -847,6 +847,7 @@ alter table public.collection_responses
 -- When staff-entry tools get built for who_completes = staff_members, that
 -- path must also go through the backend, not the anon client.
 drop policy if exists "collection_responses_write" on public.collection_responses;
+drop policy if exists "collection_responses_insert" on public.collection_responses;
 drop policy if exists "collection_responses_update" on public.collection_responses;
 drop policy if exists "collection_responses_delete" on public.collection_responses;
 
