@@ -5,6 +5,10 @@ const { agent09_consentDraft } = require("../agents/agent09_consentDraft");
 const {
   agent09b_questionSuggestions,
 } = require("../agents/agent09b_questionSuggestions");
+const {
+  normalizeQuestions,
+  validateQuestionLogic,
+} = require("../lib/questionLogic");
 
 const router = express.Router();
 
@@ -148,15 +152,6 @@ const ALLOWED_WHO = new Set([
   "other",
 ]);
 
-const ALLOWED_Q_TYPES = new Set([
-  "short_text",
-  "long_text",
-  "multiple_choice",
-  "yes_no",
-  "number",
-  "date",
-]);
-
 function normalizeToolType(t) {
   const raw = String(t ?? "")
     .normalize("NFKC")
@@ -179,56 +174,6 @@ function normalizeWhoCompletes(v) {
   const s = (v || "").toLowerCase().trim();
   if (ALLOWED_WHO.has(s)) return s;
   return "program_participants";
-}
-
-function normalizeQuestions(input) {
-  if (!Array.isArray(input)) return [];
-  return input
-    .map((q, idx) => {
-      const id =
-        typeof q.id === "string" && q.id.trim()
-          ? q.id.trim()
-          : `q-${idx}-${Date.now()}`;
-      const text =
-        typeof q.text === "string"
-          ? q.text
-          : typeof q.questionText === "string"
-            ? q.questionText
-            : "";
-      let type = (q.type || q.questionType || "short_text")
-        .toLowerCase()
-        .trim();
-      if (!ALLOWED_Q_TYPES.has(type)) type = "short_text";
-      const required = Boolean(q.required);
-      const options = Array.isArray(q.options)
-        ? q.options
-            .map((o) => String(o ?? "").trim())
-            .filter(Boolean)
-        : [];
-      const row = {
-        id,
-        text: String(text).trim(),
-        type,
-        required,
-      };
-      if (type === "multiple_choice") {
-        row.options = options;
-      }
-      const src =
-        typeof q.source === "string"
-          ? q.source.toLowerCase().trim()
-          : "";
-      if (src === "ai" || src === "user") {
-        row.source = src;
-      }
-      const rationale =
-        typeof q.rationale === "string" ? q.rationale.trim() : "";
-      if (rationale) {
-        row.rationale = rationale;
-      }
-      return row;
-    })
-    .filter((q) => q.text.length > 0);
 }
 
 function normalizeGovernanceChecksInput(raw) {
@@ -1020,13 +965,48 @@ router.post("/save-tool", async (req, res) => {
     const tool_name = typeof b.tool_name === "string" ? b.tool_name.trim() : "";
     const tool_type = normalizeToolType(b.tool_type);
     const who_completes = normalizeWhoCompletes(b.who_completes);
-    const questions = normalizeQuestions(b.questions);
     const consent_language =
       typeof b.consent_language === "string" ? b.consent_language : "";
     const governance_checks = b.governance_checks;
 
     if (!tool_name) {
       return res.status(400).json({ error: "tool_name is required." });
+    }
+
+    if (Array.isArray(b.questions)) {
+      for (let i = 0; i < b.questions.length; i++) {
+        const rawQ = b.questions[i] || {};
+        const rawText =
+          typeof rawQ.text === "string"
+            ? rawQ.text
+            : typeof rawQ.questionText === "string"
+              ? rawQ.questionText
+              : "";
+        if (!String(rawText).trim()) {
+          const qid =
+            typeof rawQ.id === "string" && rawQ.id.trim()
+              ? rawQ.id.trim()
+              : `index-${i}`;
+          return res.status(400).json({
+            error: "Question text is required.",
+            errors: [
+              {
+                question_id: qid,
+                error: "Question text cannot be empty.",
+              },
+            ],
+          });
+        }
+      }
+    }
+
+    const questions = normalizeQuestions(b.questions);
+    const logicErrors = validateQuestionLogic(questions);
+    if (logicErrors.length > 0) {
+      return res.status(400).json({
+        error: "Question logic is invalid.",
+        errors: logicErrors,
+      });
     }
 
     const configuration = buildConfiguration(
@@ -1140,6 +1120,17 @@ router.post("/launch-tool", async (req, res) => {
       return res.status(400).json({
         error:
           "All three governance confirmations must be saved on this tool before launch.",
+      });
+    }
+
+    const launchQuestions = normalizeQuestions(
+      Array.isArray(cfg.questions) ? cfg.questions : []
+    );
+    const logicErrors = validateQuestionLogic(launchQuestions);
+    if (logicErrors.length > 0) {
+      return res.status(400).json({
+        error: "Question logic is invalid.",
+        errors: logicErrors,
       });
     }
 
