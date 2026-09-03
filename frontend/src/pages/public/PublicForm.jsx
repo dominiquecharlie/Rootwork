@@ -34,13 +34,20 @@ const UI = {
     retry: "Try again",
     required: "Required",
     consentLabel: "I have read this and I agree to continue.",
+    consentRemovalNote:
+      "After you submit, you will get a removal code. Keep it. Without that code, asking the organization to delete your answers may not work. This form is anonymous, so they may not be able to find your response from a description alone.",
     submit: "Submit answers",
     submitting: "Submitting…",
     thankYouTitle: "Thank you",
     thankYouBody:
       "Your answers have been saved for the organization that asked these questions. They will use them to understand community needs and improve their program.",
-    thankYouRemove:
-      "If you want your answers removed, contact the organization that collected them and ask them to delete your response. Keep a copy of this page or the link you used if that helps you reach them.",
+    thankYouCodeTitle: "Your removal code",
+    thankYouCodeBody:
+      "Photograph this code or write it down now. You can use it later to remove your answers yourself. This code does not expire.",
+    thankYouCodeLost:
+      "Without this code, removal means contacting the organization and describing your submission. On an anonymous form that may not be enough to find it.",
+    thankYouRemoveLink: "Remove my answers later",
+    thankYouRemoveUrlHint: "Or open this link and enter your code:",
     selectOption: "Select an option",
     yes: "Yes",
     no: "No",
@@ -57,13 +64,20 @@ const UI = {
     retry: "Intentar de nuevo",
     required: "Obligatorio",
     consentLabel: "He leído esto y acepto continuar.",
+    consentRemovalNote:
+      "Después de enviar, recibirá un código de eliminación. Guárdelo. Sin ese código, pedirle a la organización que borre sus respuestas puede no funcionar. Este formulario es anónimo, así que puede que no encuentren su respuesta solo con una descripción.",
     submit: "Enviar respuestas",
     submitting: "Enviando…",
     thankYouTitle: "Gracias",
     thankYouBody:
       "Sus respuestas se guardaron para la organización que hizo estas preguntas. Las usarán para entender las necesidades de la comunidad y mejorar su programa.",
-    thankYouRemove:
-      "Si desea que eliminen sus respuestas, contacte a la organización que las recopiló y pida que borren su respuesta. Guarde una copia de esta página o del enlace que usó si eso le ayuda a contactarlos.",
+    thankYouCodeTitle: "Su código de eliminación",
+    thankYouCodeBody:
+      "Fotografie este código o anótelo ahora. Más adelante podrá usarlo para eliminar sus respuestas usted mismo. Este código no caduca.",
+    thankYouCodeLost:
+      "Sin este código, la eliminación implica contactar a la organización y describir su envío. En un formulario anónimo, eso puede no bastar para encontrarlo.",
+    thankYouRemoveLink: "Eliminar mis respuestas más tarde",
+    thankYouRemoveUrlHint: "O abra este enlace e ingrese su código:",
     selectOption: "Seleccione una opción",
     yes: "Sí",
     no: "No",
@@ -147,6 +161,7 @@ function PublicForm() {
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [removalCode, setRemovalCode] = useState("");
 
   const copy = uiCopy(language);
 
@@ -300,6 +315,9 @@ function PublicForm() {
         setSubmitting(false);
         return;
       }
+      const code =
+        typeof body?.removal_code === "string" ? body.removal_code.trim() : "";
+      setRemovalCode(code);
       setSubmitted(true);
     } catch {
       setFormError(copy.networkError);
@@ -389,6 +407,13 @@ function PublicForm() {
   }
 
   if (submitted) {
+    const removePath = token
+      ? `/f/${encodeURIComponent(token)}/remove`
+      : "";
+    const removeUrl =
+      typeof window !== "undefined" && removePath
+        ? `${window.location.origin}${removePath}`
+        : removePath;
     return (
       <main style={shellStyle}>
         <div style={cardStyle}>
@@ -416,7 +441,7 @@ function PublicForm() {
           </h1>
           <p
             style={{
-              margin: "0 0 14px",
+              margin: "0 0 20px",
               fontFamily: bodyFont,
               fontSize: "1.05rem",
               lineHeight: 1.55,
@@ -425,17 +450,102 @@ function PublicForm() {
           >
             {copy.thankYouBody}
           </p>
-          <p
-            style={{
-              margin: 0,
-              fontFamily: bodyFont,
-              fontSize: "1.05rem",
-              lineHeight: 1.55,
-              color: charcoal,
-            }}
-          >
-            {copy.thankYouRemove}
-          </p>
+          {removalCode ? (
+            <section
+              style={{
+                marginBottom: "20px",
+                padding: "16px",
+                borderRadius: "8px",
+                border: `2px solid ${green}`,
+                backgroundColor: "#FFFFFF",
+              }}
+            >
+              <h2
+                style={{
+                  margin: "0 0 8px",
+                  fontFamily: headingFont,
+                  fontSize: "1.2rem",
+                  color: green,
+                }}
+              >
+                {copy.thankYouCodeTitle}
+              </h2>
+              <p
+                style={{
+                  margin: "0 0 12px",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  fontSize: "1.65rem",
+                  letterSpacing: "0.06em",
+                  fontWeight: 700,
+                  color: charcoal,
+                  wordBreak: "break-all",
+                }}
+                aria-label={copy.thankYouCodeTitle}
+              >
+                {removalCode}
+              </p>
+              <p
+                style={{
+                  margin: "0 0 10px",
+                  fontFamily: bodyFont,
+                  fontSize: "1.05rem",
+                  lineHeight: 1.55,
+                  color: charcoal,
+                }}
+              >
+                {copy.thankYouCodeBody}
+              </p>
+              <p
+                style={{
+                  margin: 0,
+                  fontFamily: bodyFont,
+                  fontSize: "1.05rem",
+                  lineHeight: 1.55,
+                  color: charcoal,
+                }}
+              >
+                {copy.thankYouCodeLost}
+              </p>
+            </section>
+          ) : null}
+          {removeUrl ? (
+            <div>
+              <a
+                href={removePath}
+                style={{
+                  display: "inline-block",
+                  marginBottom: "10px",
+                  fontFamily: bodyFont,
+                  fontSize: "1.05rem",
+                  fontWeight: 600,
+                  color: green,
+                }}
+              >
+                {copy.thankYouRemoveLink}
+              </a>
+              <p
+                style={{
+                  margin: "0 0 6px",
+                  fontFamily: bodyFont,
+                  fontSize: "0.95rem",
+                  color: muted,
+                }}
+              >
+                {copy.thankYouRemoveUrlHint}
+              </p>
+              <p
+                style={{
+                  margin: 0,
+                  fontFamily: bodyFont,
+                  fontSize: "0.95rem",
+                  wordBreak: "break-all",
+                  color: charcoal,
+                }}
+              >
+                {removeUrl}
+              </p>
+            </div>
+          ) : null}
         </div>
       </main>
     );
@@ -794,6 +904,17 @@ function PublicForm() {
             >
               {consentText}
             </div>
+            <p
+              style={{
+                margin: "0 0 16px",
+                fontFamily: bodyFont,
+                fontSize: "0.98rem",
+                lineHeight: 1.5,
+                color: muted,
+              }}
+            >
+              {copy.consentRemovalNote}
+            </p>
             <label
               htmlFor="consent-ack"
               style={{

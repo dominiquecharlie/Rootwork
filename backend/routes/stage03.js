@@ -30,6 +30,7 @@ const {
   responseCsvFilename,
   shapeResponseCsv,
 } = require("../lib/artifacts/responseCsv");
+const { orgDeletionAudit } = require("../lib/responseDeletion");
 
 const router = express.Router();
 const requireStarterTier = requireTier("starter", "growth", "enterprise");
@@ -1541,6 +1542,140 @@ router.get(
         `attachment; filename="${filename}"`
       );
       return res.status(200).send(csv);
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message || "Server error." });
+    }
+  }
+);
+
+// Response list for org-assisted delete. Never returns removal codes or hashes.
+router.get(
+  "/tools/:toolId/responses",
+  requireStarterTier,
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req, res);
+      if (!user) return;
+
+      const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+      if (orgError) {
+        return res.status(400).json({ error: orgError });
+      }
+
+      const toolId =
+        typeof req.params.toolId === "string" ? req.params.toolId.trim() : "";
+      if (!toolId) {
+        return res.status(400).json({ error: "tool_id is required." });
+      }
+
+      const { data: tool, error: findErr } = await supabase
+        .from("collection_tools")
+        .select("id")
+        .eq("id", toolId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+
+      if (findErr || !tool) {
+        return res.status(400).json({ error: "Collection tool not found." });
+      }
+
+      const { data: responses, error: respErr } = await supabase
+        .from("collection_responses")
+        .select("id, submitted_at, language")
+        .eq("org_id", orgId)
+        .eq("collection_tool_id", toolId)
+        .order("submitted_at", { ascending: false });
+
+      if (respErr) {
+        return res.status(400).json({ error: respErr.message });
+      }
+
+      return res.status(200).json({ responses: responses || [] });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message || "Server error." });
+    }
+  }
+);
+
+// Org-assisted delete (Path B). Records method=org with deleted_by.
+router.post(
+  "/tools/:toolId/responses/:responseId/delete",
+  requireStarterTier,
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req, res);
+      if (!user) return;
+
+      const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+      if (orgError) {
+        return res.status(400).json({ error: orgError });
+      }
+
+      const toolId =
+        typeof req.params.toolId === "string" ? req.params.toolId.trim() : "";
+      const responseId =
+        typeof req.params.responseId === "string"
+          ? req.params.responseId.trim()
+          : "";
+      if (!toolId || !responseId) {
+        return res
+          .status(400)
+          .json({ error: "tool_id and response_id are required." });
+      }
+
+      const { data: tool, error: findErr } = await supabase
+        .from("collection_tools")
+        .select("id")
+        .eq("id", toolId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+
+      if (findErr || !tool) {
+        return res.status(400).json({ error: "Collection tool not found." });
+      }
+
+      const { data: row, error: rowErr } = await supabase
+        .from("collection_responses")
+        .select("id, org_id, collection_tool_id")
+        .eq("id", responseId)
+        .eq("org_id", orgId)
+        .eq("collection_tool_id", toolId)
+        .maybeSingle();
+
+      if (rowErr || !row) {
+        return res.status(404).json({ error: "Response not found." });
+      }
+
+      const { error: delErr } = await supabase
+        .from("collection_responses")
+        .delete()
+        .eq("id", row.id)
+        .eq("org_id", orgId)
+        .eq("collection_tool_id", toolId);
+
+      if (delErr) {
+        return res.status(400).json({ error: delErr.message });
+      }
+
+      const { error: auditErr } = await supabase.from("response_deletions").insert(
+        orgDeletionAudit({
+          org_id: row.org_id,
+          collection_tool_id: row.collection_tool_id,
+          deleted_by: user.id,
+        })
+      );
+
+      if (auditErr) {
+        console.error(auditErr);
+        return res.status(500).json({
+          error:
+            "Response deleted, but the deletion audit row could not be saved.",
+        });
+      }
+
+      return res.status(200).json({ success: true });
     } catch (err) {
       console.error(err);
       return res.status(500).json({ error: err.message || "Server error." });

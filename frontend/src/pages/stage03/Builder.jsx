@@ -554,6 +554,10 @@ function Builder() {
   const [tierNotice, setTierNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [responseRows, setResponseRows] = useState([]);
+  const [responsesLoading, setResponsesLoading] = useState(false);
+  const [responsesError, setResponsesError] = useState("");
+  const [deletingResponseId, setDeletingResponseId] = useState("");
 
   useEffect(() => {
     const tid = (searchParams.get("tool_id") || "").trim();
@@ -1226,6 +1230,95 @@ function Builder() {
       setSaveError(e.message || "Could not download responses.");
     }
   }
+
+  async function loadResponseRows(toolId) {
+    const id = typeof toolId === "string" ? toolId.trim() : "";
+    if (!id) {
+      setResponseRows([]);
+      return;
+    }
+    setResponsesLoading(true);
+    setResponsesError("");
+    try {
+      const token = await getToken();
+      if (!token) {
+        setResponsesError("Your session has expired. Please sign in again.");
+        setResponseRows([]);
+        return;
+      }
+      const response = await fetch(
+        `${apiBaseUrl}/api/stage03/tools/${encodeURIComponent(id)}/responses`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const parsed = parseStage03GateResponse(response, body);
+        setResponsesError(parsed.message || "Could not load responses.");
+        setResponseRows([]);
+        return;
+      }
+      const list = Array.isArray(body?.responses) ? body.responses : [];
+      setResponseRows(
+        list.filter(
+          (r) => r && typeof r === "object" && typeof r.id === "string"
+        )
+      );
+    } catch {
+      setResponsesError("Could not load responses.");
+      setResponseRows([]);
+    } finally {
+      setResponsesLoading(false);
+    }
+  }
+
+  async function handleDeleteResponse(responseId) {
+    if (!collectionToolId || !responseId || deletingResponseId) return;
+    const confirmed = window.confirm(
+      "Delete this response permanently? This cannot be undone."
+    );
+    if (!confirmed) return;
+    setDeletingResponseId(responseId);
+    setResponsesError("");
+    try {
+      const token = await getToken();
+      if (!token) {
+        setResponsesError("Your session has expired. Please sign in again.");
+        return;
+      }
+      const response = await fetch(
+        `${apiBaseUrl}/api/stage03/tools/${encodeURIComponent(collectionToolId)}/responses/${encodeURIComponent(responseId)}/delete`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const parsed = parseStage03GateResponse(response, body);
+        setResponsesError(parsed.message || "Could not delete response.");
+        return;
+      }
+      setResponseRows((prev) => prev.filter((r) => r.id !== responseId));
+    } catch {
+      setResponsesError("Could not delete response.");
+    } finally {
+      setDeletingResponseId("");
+    }
+  }
+
+  useEffect(() => {
+    if (!collectionToolId) {
+      setResponseRows([]);
+      setResponsesError("");
+      return;
+    }
+    loadResponseRows(collectionToolId);
+    // Intentionally keyed only on tool id; refresh after delete is local.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collectionToolId]);
 
   async function handleSaveDraft() {
     setSaveError("");
@@ -2963,6 +3056,153 @@ function Builder() {
             Launch tool
           </button>
         </div>
+
+        {collectionToolId ? (
+          <section
+            style={{
+              maxWidth: "720px",
+              margin: "0 auto 32px",
+              padding: "20px",
+              borderRadius: "8px",
+              border: `1px solid ${mintBorder}`,
+              backgroundColor: "#FFFFFF",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "12px",
+              }}
+            >
+              <h2
+                style={{
+                  margin: 0,
+                  fontFamily: georgia,
+                  fontSize: "1.25rem",
+                  color: green,
+                }}
+              >
+                Responses
+              </h2>
+              <button
+                type="button"
+                onClick={() => loadResponseRows(collectionToolId)}
+                disabled={responsesLoading}
+                style={{
+                  cursor: responsesLoading ? "not-allowed" : "pointer",
+                  padding: "8px 14px",
+                  borderRadius: "8px",
+                  border: `1px solid ${mintBorder}`,
+                  backgroundColor: "#FAF9F7",
+                  color: bodyDark,
+                  fontFamily: dmSans,
+                  fontWeight: 600,
+                  fontSize: "0.9rem",
+                }}
+              >
+                {responsesLoading ? "Loading…" : "Refresh"}
+              </button>
+            </div>
+            <p
+              style={{
+                margin: "0 0 14px",
+                color: muted,
+                fontFamily: dmSans,
+                fontSize: "0.9rem",
+                lineHeight: 1.45,
+              }}
+            >
+              Org-assisted delete only. Removal codes belong to respondents and
+              are never shown here. On anonymous forms, staff may not be able to
+              match a request to a row without the resident&apos;s code.
+            </p>
+            {responsesError ? (
+              <p
+                role="alert"
+                style={{
+                  margin: "0 0 12px",
+                  color: "#B91C1C",
+                  fontFamily: dmSans,
+                }}
+              >
+                {responsesError}
+              </p>
+            ) : null}
+            {!responsesLoading && responseRows.length === 0 ? (
+              <p
+                style={{
+                  margin: 0,
+                  color: muted,
+                  fontFamily: dmSans,
+                }}
+              >
+                No responses yet.
+              </p>
+            ) : null}
+            {responseRows.length > 0 ? (
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {responseRows.map((row) => {
+                  const submittedLabel =
+                    typeof row.submitted_at === "string" && row.submitted_at
+                      ? new Date(row.submitted_at).toLocaleString()
+                      : "Unknown time";
+                  const langLabel =
+                    typeof row.language === "string" && row.language.trim()
+                      ? row.language.trim()
+                      : "unknown";
+                  return (
+                    <li
+                      key={row.id}
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        padding: "12px 0",
+                        borderTop: `1px solid ${mintBorder}`,
+                      }}
+                    >
+                      <div style={{ fontFamily: dmSans, color: bodyDark }}>
+                        <div style={{ fontWeight: 600 }}>{submittedLabel}</div>
+                        <div style={{ color: muted, fontSize: "0.9rem" }}>
+                          Language: {langLabel}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteResponse(row.id)}
+                        disabled={deletingResponseId === row.id}
+                        style={{
+                          cursor:
+                            deletingResponseId === row.id
+                              ? "not-allowed"
+                              : "pointer",
+                          padding: "8px 14px",
+                          borderRadius: "8px",
+                          border: "1px solid #B91C1C",
+                          backgroundColor: "#FFFFFF",
+                          color: "#B91C1C",
+                          fontFamily: dmSans,
+                          fontWeight: 600,
+                          fontSize: "0.9rem",
+                        }}
+                      >
+                        {deletingResponseId === row.id
+                          ? "Deleting…"
+                          : "Delete"}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+          </section>
+        ) : null}
 
         <p style={{ textAlign: "center", margin: 0 }}>
           <Link

@@ -866,3 +866,58 @@ create policy "collection_responses_delete_server_only"
   on public.collection_responses
   for delete
   using (false);
+
+-- Opt-out: store only a hash of the resident's removal code.
+-- Hash includes a server-side pepper from REMOVAL_CODE_PEPPER.
+-- The plaintext code is shown once at submit and never persisted.
+-- No expires_at: the right to withdraw does not have a clock on it.
+alter table public.collection_responses
+  add column if not exists removal_code_hash text;
+
+create index if not exists collection_responses_tool_removal_hash_idx
+  on public.collection_responses (collection_tool_id, removal_code_hash)
+  where removal_code_hash is not null;
+
+-- Audit: records THAT a deletion happened, never the deleted content.
+-- An audit trail that retains what was deleted is not a deletion.
+create table if not exists public.response_deletions (
+  id uuid primary key default gen_random_uuid(),
+  org_id uuid not null references public.organizations(id) on delete cascade,
+  collection_tool_id uuid not null references public.collection_tools(id) on delete cascade,
+  deleted_at timestamptz not null default now(),
+  method text not null check (method in ('self', 'org')),
+  deleted_by uuid null references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  constraint response_deletions_org_requires_actor check (
+    method <> 'org' or deleted_by is not null
+  ),
+  constraint response_deletions_self_has_no_actor check (
+    method <> 'self' or deleted_by is null
+  )
+);
+
+alter table public.response_deletions enable row level security;
+
+create policy "response_deletions_read"
+  on public.response_deletions
+  for select
+  using (public.is_org_member(org_id));
+
+create policy "response_deletions_insert_server_only"
+  on public.response_deletions
+  for insert
+  with check (false);
+
+create policy "response_deletions_update_server_only"
+  on public.response_deletions
+  for update
+  using (false)
+  with check (false);
+
+create policy "response_deletions_delete_server_only"
+  on public.response_deletions
+  for delete
+  using (false);
+
+create index if not exists response_deletions_org_tool_idx
+  on public.response_deletions (org_id, collection_tool_id, deleted_at desc);

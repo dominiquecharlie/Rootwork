@@ -13,6 +13,14 @@ const {
 } = require("../lib/questionLogic");
 const { publicLanguages } = require("../lib/publicFormLanguages");
 const { isValidPublicTokenShape } = require("../lib/publicToken");
+const {
+  formatRemovalCodeForDisplay,
+  generateRemovalCode,
+  hashRemovalCode,
+  isValidRemovalCodeShape,
+  PUBLIC_REMOVE_OK,
+} = require("../lib/removalCode");
+const { selfDeletionAudit } = require("../lib/responseDeletion");
 
 const router = express.Router();
 
@@ -50,6 +58,16 @@ const publicFormGetLimiter = rateLimit({
 const publicFormRespondLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: publicKeyGenerator,
+  message: { error: "Too many requests. Try again later." },
+});
+
+// Tighter than load/submit: wrong codes must not be brute-forceable.
+const publicFormRemoveLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: publicKeyGenerator,
@@ -220,8 +238,11 @@ router.post("/form/:token/respond", publicFormRespondLimiter, async (req, res) =
 
     const visibleAnswers = filterVisibleAnswers(questions, answers);
     const consentAt = new Date().toISOString();
+    const removalPlain = generateRemovalCode();
+    const removal_code_hash = hashRemovalCode(removalPlain);
 
     // Do not persist respondent IP. Rate limiting may use it in memory only.
+    // Never persist the plaintext removal code.
     const { error: insertErr } = await supabase
       .from("collection_responses")
       .insert({
@@ -231,6 +252,7 @@ router.post("/form/:token/respond", publicFormRespondLimiter, async (req, res) =
         consent_acknowledged_at: consentAt,
         language,
         submitted_at: consentAt,
+        removal_code_hash,
       });
 
     if (insertErr) {
@@ -238,7 +260,72 @@ router.post("/form/:token/respond", publicFormRespondLimiter, async (req, res) =
       return res.status(500).json({ error: "Could not save response." });
     }
 
-    return res.status(201).json({ success: true });
+    return res.status(201).json({
+      success: true,
+      removal_code: formatRemovalCodeForDisplay(removalPlain),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Server error." });
+  }
+});
+
+// Self-service removal. Same response shape whether the code matched or not.
+router.post("/form/:token/remove", publicFormRemoveLimiter, async (req, res) => {
+  setNoStore(res);
+  try {
+    const token =
+      typeof req.params.token === "string" ? req.params.token.trim() : "";
+    const loaded = await loadLaunchedPublicTool(token);
+    if (!loaded) {
+      return res.status(404).json({ error: "Form not found." });
+    }
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const code = typeof body.code === "string" ? body.code : "";
+
+    if (!isValidRemovalCodeShape(code)) {
+      return res.status(200).json(PUBLIC_REMOVE_OK);
+    }
+
+    const codeHash = hashRemovalCode(code);
+    const { data: row, error: findErr } = await supabase
+      .from("collection_responses")
+      .select("id, org_id, collection_tool_id")
+      .eq("collection_tool_id", loaded.tool.id)
+      .eq("removal_code_hash", codeHash)
+      .maybeSingle();
+
+    if (findErr || !row) {
+      return res.status(200).json(PUBLIC_REMOVE_OK);
+    }
+
+    const { error: delErr } = await supabase
+      .from("collection_responses")
+      .delete()
+      .eq("id", row.id)
+      .eq("collection_tool_id", loaded.tool.id);
+
+    if (delErr) {
+      console.error(delErr);
+      return res.status(500).json({ error: "Server error." });
+    }
+
+    const { error: auditErr } = await supabase
+      .from("response_deletions")
+      .insert(
+        selfDeletionAudit({
+          org_id: row.org_id,
+          collection_tool_id: row.collection_tool_id,
+        })
+      );
+
+    if (auditErr) {
+      console.error(auditErr);
+      // Response already deleted; still return the same opaque success.
+    }
+
+    return res.status(200).json(PUBLIC_REMOVE_OK);
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Server error." });

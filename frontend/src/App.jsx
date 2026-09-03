@@ -26,6 +26,7 @@ import Gaps from "./pages/stage03/Gaps";
 import Tools from "./pages/stage03/Tools";
 import Builder from "./pages/stage03/Builder";
 import PublicForm from "./pages/public/PublicForm";
+import PublicFormRemove from "./pages/public/PublicFormRemove";
 
 function LandingEntry() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -73,6 +74,7 @@ function App() {
       <Route path="/auth/callback" element={<AuthCallback />} />
       {/* Public respondent form: must stay outside ProtectedRoute. Anonymous. */}
       <Route path="/f/:token" element={<PublicForm />} />
+      <Route path="/f/:token/remove" element={<PublicFormRemove />} />
       <Route
         path="/dashboard"
         element={
