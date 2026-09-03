@@ -5,6 +5,9 @@ const { supabase } = require("../lib/supabaseClient");
 const { agent04_sowExtraction } = require("../agents/agent04_sowExtraction");
 const { agent05_engagementTemplates } = require("../agents/agent05_engagementTemplates");
 const { extractProgramDocumentText } = require("../utils/documentTextExtract");
+const {
+  generateEngagementTemplateDocx,
+} = require("../lib/artifacts/engagementTemplate");
 
 const router = express.Router();
 
@@ -1019,6 +1022,64 @@ router.post("/complete-hardstop", async (req, res) => {
     }
 
     return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+// Free-tier downloadable engagement template (.docx). No tier gate.
+router.get("/templates/:templateId/download", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const templateId =
+      typeof req.params.templateId === "string"
+        ? req.params.templateId.trim()
+        : "";
+    if (!templateId) {
+      return res.status(400).json({ error: "template id is required." });
+    }
+
+    const { data: template, error: findErr } = await supabase
+      .from("engagement_templates")
+      .select("id, org_id, template_name, template_type, prompt_text")
+      .eq("id", templateId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+
+    if (findErr || !template) {
+      return res.status(400).json({ error: "Template not found." });
+    }
+
+    const { data: org } = await supabase
+      .from("organizations")
+      .select("name")
+      .eq("id", orgId)
+      .maybeSingle();
+
+    const result = await generateEngagementTemplateDocx({
+      orgName: org?.name || "",
+      template_type: template.template_type,
+      template_name: template.template_name,
+      prompt_text: template.prompt_text,
+    });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename}"`
+    );
+    return res.status(200).send(result.buffer);
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message || "Server error." });

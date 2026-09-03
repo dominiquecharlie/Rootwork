@@ -530,7 +530,9 @@ function Builder() {
   const [questionErrors, setQuestionErrors] = useState({});
   const [deleteBlockMessage, setDeleteBlockMessage] = useState("");
 
-  const [consentLanguage, setConsentLanguage] = useState("");
+  const [consentByLang, setConsentByLang] = useState(() =>
+    emptyLangMap(DEFAULT_TOOL_LANGUAGES)
+  );
 
   const [toolNotes, setToolNotes] = useState("");
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
@@ -668,11 +670,31 @@ function Builder() {
           setWhoCompletes(cfg.who_completes);
         }
         setQuestions(mapped);
-        setConsentLanguage(
-          typeof tool.consent_language === "string"
-            ? tool.consent_language
-            : ""
-        );
+        setConsentByLang(() => {
+          const next = emptyLangMap(DEFAULT_TOOL_LANGUAGES);
+          let parsed = {};
+          if (typeof tool.consent_language === "string") {
+            const t = tool.consent_language.trim();
+            if (t.startsWith("{")) {
+              try {
+                parsed = JSON.parse(t);
+              } catch {
+                parsed = { en: t };
+              }
+            } else if (t) {
+              parsed = { en: t };
+            }
+          } else if (
+            tool.consent_language &&
+            typeof tool.consent_language === "object"
+          ) {
+            parsed = tool.consent_language;
+          }
+          for (const [lang, val] of Object.entries(parsed)) {
+            if (typeof val === "string") next[lang] = val;
+          }
+          return next;
+        });
         setGovConsent(Boolean(gc.consent_reviewed));
         setGovShare(Boolean(gc.shareback_plan));
         setGovData(Boolean(gc.data_storage));
@@ -775,9 +797,17 @@ function Builder() {
           source: "ai",
         }));
         setQuestions(withIds);
-        setConsentLanguage(
-          typeof data.consent_text === "string" ? data.consent_text : ""
-        );
+        setConsentByLang(() => {
+          const next = emptyLangMap(DEFAULT_TOOL_LANGUAGES);
+          if (typeof data.consent_language === "object" && data.consent_language) {
+            for (const [lang, val] of Object.entries(data.consent_language)) {
+              if (typeof val === "string") next[lang] = val;
+            }
+          } else if (typeof data.consent_text === "string" && data.consent_text.trim()) {
+            next.en = data.consent_text.trim();
+          }
+          return next;
+        });
         setToolNotes(
           typeof data.tool_notes === "string" ? data.tool_notes.trim() : ""
         );
@@ -1111,7 +1141,17 @@ function Builder() {
         }
         return row;
       }),
-      consent_language: consentLanguage,
+      consent_language: (() => {
+        const map = {};
+        for (const lang of toolLanguages) {
+          const v = (consentByLang[lang] || "").trim();
+          if (v) map[lang] = v;
+        }
+        if (!map.en && (consentByLang.en || "").trim()) {
+          map.en = consentByLang.en.trim();
+        }
+        return map;
+      })(),
       governance_checks: {
         consent_reviewed: govConsent,
         shareback_plan: govShare,
@@ -1124,11 +1164,68 @@ function Builder() {
     toolType,
     whoCompletes,
     questions,
-    consentLanguage,
+    consentByLang,
+    toolLanguages,
     govConsent,
     govShare,
     govData,
   ]);
+
+  async function downloadAuthorizedFile(path) {
+    const token = await getToken();
+    if (!token) {
+      setSaveError("Your session has expired. Please sign in again.");
+      return;
+    }
+    const response = await fetch(`${apiBaseUrl}${path}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(
+        typeof body?.error === "string" && body.error.trim()
+          ? body.error
+          : "Download failed."
+      );
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : "download";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleDownloadInstrument(lang) {
+    if (!collectionToolId) return;
+    setSaveError("");
+    try {
+      await downloadAuthorizedFile(
+        `/api/stage03/tools/${encodeURIComponent(collectionToolId)}/download-instrument?lang=${encodeURIComponent(lang)}`
+      );
+    } catch (e) {
+      setSaveError(e.message || "Could not download instrument.");
+    }
+  }
+
+  async function handleDownloadResponses() {
+    if (!collectionToolId) return;
+    setSaveError("");
+    try {
+      await downloadAuthorizedFile(
+        `/api/stage03/tools/${encodeURIComponent(collectionToolId)}/download-responses`
+      );
+    } catch (e) {
+      setSaveError(e.message || "Could not download responses.");
+    }
+  }
 
   async function handleSaveDraft() {
     setSaveError("");
@@ -1235,8 +1332,8 @@ function Builder() {
       setLaunchError("Confirm all governance items before launch.");
       return;
     }
-    if (!consentLanguage.trim()) {
-      setLaunchError("Add consent language before launch.");
+    if (!(consentByLang.en || "").trim()) {
+      setLaunchError("Add English consent language before launch.");
       return;
     }
     setLaunching(true);
@@ -1658,7 +1755,7 @@ function Builder() {
                 type="button"
                 onClick={() => {
                   setQuestions([]);
-                  setConsentLanguage("");
+                  setConsentByLang(emptyLangMap(toolLanguages));
                 }}
                 style={{
                   cursor: "pointer",
@@ -2540,18 +2637,65 @@ function Builder() {
           <div style={{ textAlign: "center", marginBottom: "12px" }}>
             <DraftLabel />
           </div>
-          <textarea
-            value={consentLanguage}
-            onChange={(e) => setConsentLanguage(e.target.value)}
-            rows={8}
-            placeholder="Consent language will appear here after suggestions load. You can edit it directly."
-            style={{
-              ...inputStyle,
-              resize: "vertical",
-              minHeight: "160px",
-              marginBottom: "10px",
-            }}
-          />
+          {toolLanguages.map((lang) => {
+            const isEn = lang === "en";
+            return (
+              <label
+                key={`consent-${lang}`}
+                style={{ display: "block", marginBottom: "12px" }}
+              >
+                <span
+                  style={{
+                    display: "block",
+                    marginBottom: "4px",
+                    color: muted,
+                    fontFamily: dmSans,
+                    fontSize: "0.82rem",
+                    fontWeight: 600,
+                  }}
+                >
+                  {languageLabel(lang)}
+                  {isEn ? " (required)" : " (optional)"}
+                </span>
+                <textarea
+                  value={consentByLang[lang] || ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setConsentByLang((prev) => ({
+                      ...prev,
+                      [lang]: value,
+                    }));
+                  }}
+                  rows={6}
+                  placeholder={
+                    isEn
+                      ? "English consent language. Required before launch."
+                      : `${languageLabel(lang)} consent. Leave blank only if you must; respondents in this language will see English consent.`
+                  }
+                  style={{
+                    ...inputStyle,
+                    resize: "vertical",
+                    minHeight: "120px",
+                  }}
+                />
+                {!isEn && lang === "es" ? (
+                  <span
+                    style={{
+                      display: "block",
+                      marginTop: "4px",
+                      color: muted,
+                      fontFamily: dmSans,
+                      fontSize: "0.78rem",
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    Optional but important. If blank, Spanish respondents see
+                    English consent on the form and on paper.
+                  </span>
+                ) : null}
+              </label>
+            );
+          })}
           <p
             style={{
               margin: 0,
@@ -2731,6 +2875,75 @@ function Builder() {
           >
             Save draft
           </button>
+          {collectionToolId ? (
+            <button
+              type="button"
+              onClick={() => handleDownloadInstrument("en")}
+              style={{
+                cursor: "pointer",
+                padding: "12px 22px",
+                borderRadius: "8px",
+                border: `2px solid ${green}`,
+                backgroundColor: "#FFFFFF",
+                color: green,
+                fontFamily: dmSans,
+                fontWeight: 600,
+              }}
+            >
+              Download instrument (EN)
+            </button>
+          ) : null}
+          {collectionToolId ? (
+            <button
+              type="button"
+              onClick={() => handleDownloadInstrument("es")}
+              style={{
+                cursor: "pointer",
+                padding: "12px 22px",
+                borderRadius: "8px",
+                border: `2px solid ${green}`,
+                backgroundColor: "#FFFFFF",
+                color: green,
+                fontFamily: dmSans,
+                fontWeight: 600,
+              }}
+            >
+              Download instrument (ES)
+            </button>
+          ) : null}
+          {collectionToolId ? (
+            <div style={{ textAlign: "center" }}>
+              <button
+                type="button"
+                onClick={handleDownloadResponses}
+                style={{
+                  cursor: "pointer",
+                  padding: "12px 22px",
+                  borderRadius: "8px",
+                  border: `2px solid ${green}`,
+                  backgroundColor: "#FFFFFF",
+                  color: green,
+                  fontFamily: dmSans,
+                  fontWeight: 600,
+                }}
+              >
+                Download responses (CSV)
+              </button>
+              <p
+                style={{
+                  margin: "8px 0 0",
+                  color: muted,
+                  fontFamily: dmSans,
+                  fontSize: "0.78rem",
+                  lineHeight: 1.4,
+                  maxWidth: "320px",
+                }}
+              >
+                Empty cell means the question was hidden by branching.
+                [no answer] means it was shown and left blank.
+              </p>
+            </div>
+          ) : null}
           <button
             type="button"
             disabled={launchDisabled}

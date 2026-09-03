@@ -8,6 +8,7 @@ const { supabase } = require("../lib/supabaseClient");
 const {
   filterVisibleAnswers,
   normalizeQuestions,
+  parseStoredConsentLanguage,
   validateResponsePayload,
 } = require("../lib/questionLogic");
 const { publicLanguages } = require("../lib/publicFormLanguages");
@@ -22,19 +23,36 @@ const PAID_PUBLIC_TIERS = new Set(["starter", "growth", "enterprise"]);
 // deleted engagement record takes a live form dark mid-collection, which
 // punishes community respondents rather than the org.
 
-const publicFormLimiter = rateLimit({
+// Shared IPs are the expected case, not the suspicious one, because community
+// engagement happens in rooms (one venue wifi, many phones). Per-IP limiting
+// here protects against accidental floods and casual abuse. It does not stop a
+// determined attacker, who rotates IPs regardless, so sizing it tight buys
+// very little and costs the actual use case.
+//
+// These numbers are starting points to revisit after the first real community
+// meeting. The in-memory store does not survive a restart or multiple instances.
+function publicKeyGenerator(req) {
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  const token =
+    typeof req.params?.token === "string" ? req.params.token.trim() : "";
+  return `${ip}:${token}`;
+}
+
+const publicFormGetLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 60,
+  max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  // Per IP and per token. express-rate-limit is installed; this key does not
-  // survive a process restart or multiple instances without a shared store.
-  keyGenerator: (req) => {
-    const ip = req.ip || req.socket?.remoteAddress || "unknown";
-    const token =
-      typeof req.params?.token === "string" ? req.params.token.trim() : "";
-    return `${ip}:${token}`;
-  },
+  keyGenerator: publicKeyGenerator,
+  message: { error: "Too many requests. Try again later." },
+});
+
+const publicFormRespondLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: publicKeyGenerator,
   message: { error: "Too many requests. Try again later." },
 });
 
@@ -87,11 +105,11 @@ async function loadLaunchedPublicTool(token) {
  * classification.
  */
 function buildPublicFormPayload(tool, org, questions) {
+  const consent = parseStoredConsentLanguage(tool.consent_language);
   return {
     tool_name: typeof tool.tool_name === "string" ? tool.tool_name : "",
     languages: publicLanguages(org, questions),
-    consent_language:
-      typeof tool.consent_language === "string" ? tool.consent_language : "",
+    consent_language: consent || { en: "" },
     questions: questions.map((q) => {
       const row = {
         id: q.id,
@@ -120,7 +138,7 @@ function buildPublicFormPayload(tool, org, questions) {
   };
 }
 
-router.get("/form/:token", publicFormLimiter, async (req, res) => {
+router.get("/form/:token", publicFormGetLimiter, async (req, res) => {
   setNoStore(res);
   try {
     const token =
@@ -146,7 +164,7 @@ router.get("/form/:token", publicFormLimiter, async (req, res) => {
   }
 });
 
-router.post("/form/:token/respond", publicFormLimiter, async (req, res) => {
+router.post("/form/:token/respond", publicFormRespondLimiter, async (req, res) => {
   setNoStore(res);
   try {
     const token =

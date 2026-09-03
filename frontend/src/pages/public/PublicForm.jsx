@@ -196,9 +196,11 @@ function PublicForm() {
           typeof body.tool_name === "string" ? body.tool_name.trim() : "",
         languages,
         consent_language:
-          typeof body.consent_language === "string"
+          body.consent_language && typeof body.consent_language === "object"
             ? body.consent_language
-            : "",
+            : typeof body.consent_language === "string"
+              ? { en: body.consent_language }
+              : { en: "" },
         questions: Array.isArray(body.questions) ? body.questions : [],
       });
       setLanguage(nextLang);
@@ -441,6 +443,16 @@ function PublicForm() {
 
   const languages = form?.languages || [];
   const showToggle = languages.length > 1;
+  const consentText = pickLocalized(form?.consent_language, language);
+  const consentFallbackWarning =
+    language !== "en" &&
+    (!consentText ||
+      !(
+        form?.consent_language &&
+        typeof form.consent_language === "object" &&
+        typeof form.consent_language[language] === "string" &&
+        form.consent_language[language].trim()
+      ));
 
   return (
     <main style={shellStyle}>
@@ -746,6 +758,26 @@ function PublicForm() {
             >
               {language === "es" ? "Consentimiento" : "Consent"}
             </h2>
+            {consentFallbackWarning ? (
+              <p
+                role="alert"
+                style={{
+                  margin: "0 0 12px",
+                  padding: "12px",
+                  borderRadius: "8px",
+                  border: "1px solid #F87171",
+                  backgroundColor: "#FEF2F2",
+                  fontFamily: bodyFont,
+                  fontSize: "0.95rem",
+                  lineHeight: 1.45,
+                  color: charcoal,
+                }}
+              >
+                {language === "es"
+                  ? "Aviso: el consentimiento no tiene traducción al español. El texto a continuación está en inglés."
+                  : "Notice: consent is not available in this language. The text below is in English."}
+              </p>
+            ) : null}
             <div
               style={{
                 padding: "16px",
@@ -760,7 +792,7 @@ function PublicForm() {
                 marginBottom: "16px",
               }}
             >
-              {form?.consent_language || ""}
+              {consentText}
             </div>
             <label
               htmlFor="consent-ack"

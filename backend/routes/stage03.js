@@ -14,10 +14,22 @@ const {
 const {
   isBlankQuestionText,
   isUsableOption,
+  normalizeConsentLanguage,
   normalizeQuestions,
+  parseStoredConsentLanguage,
+  serializeConsentLanguage,
   validateQuestionLogic,
 } = require("../lib/questionLogic");
 const { generatePublicToken } = require("../lib/publicToken");
+const {
+  generateCollectionInstrumentDocx,
+  instrumentLanguagesForTool,
+} = require("../lib/artifacts/collectionInstrument");
+const {
+  renderResponseCsv,
+  responseCsvFilename,
+  shapeResponseCsv,
+} = require("../lib/artifacts/responseCsv");
 
 const router = express.Router();
 const requireStarterTier = requireTier("starter", "growth", "enterprise");
@@ -745,6 +757,7 @@ router.post("/suggest-questions", requireStarterTier, async (req, res) => {
 
     if (hardcoded) {
       let consent_text = "";
+      let consent_language = null;
       try {
         const consentResult = await agent09_consentDraft({
           orgId,
@@ -761,6 +774,9 @@ router.post("/suggest-questions", requireStarterTier, async (req, res) => {
           typeof consentResult?.consent_text === "string"
             ? consentResult.consent_text.trim()
             : "";
+        consent_language =
+          consentResult?.consent_language ||
+          (consent_text ? { en: consent_text } : null);
       } catch (e) {
         console.error("Consent draft failed:", e.message);
       }
@@ -768,6 +784,7 @@ router.post("/suggest-questions", requireStarterTier, async (req, res) => {
         questions: hardcoded.questions,
         tool_notes: hardcoded.tool_notes,
         consent_text,
+        consent_language,
       });
     }
 
@@ -831,6 +848,9 @@ router.post("/suggest-questions", requireStarterTier, async (req, res) => {
       typeof consentResult?.consent_text === "string"
         ? consentResult.consent_text.trim()
         : "";
+    const consent_language =
+      consentResult?.consent_language ||
+      (consent_text ? { en: consent_text } : null);
 
     let tool_notes =
       typeof qResult?.tool_notes === "string" ? qResult.tool_notes.trim() : "";
@@ -843,6 +863,7 @@ router.post("/suggest-questions", requireStarterTier, async (req, res) => {
       questions,
       tool_notes,
       consent_text,
+      consent_language,
     });
   } catch (err) {
     console.error(err);
@@ -899,7 +920,10 @@ router.post("/consent-draft", requireStarterTier, async (req, res) => {
       });
     }
 
-    return res.status(200).json({ consent_text: result.consent_text });
+    return res.status(200).json({
+      consent_text: result.consent_text,
+      consent_language: result.consent_language || { en: result.consent_text },
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message || "Server error." });
@@ -920,8 +944,8 @@ router.post("/save-tool", requireStarterTier, async (req, res) => {
     const tool_name = typeof b.tool_name === "string" ? b.tool_name.trim() : "";
     const tool_type = normalizeToolType(b.tool_type);
     const who_completes = normalizeWhoCompletes(b.who_completes);
-    const consent_language =
-      typeof b.consent_language === "string" ? b.consent_language : "";
+    const consentMap = normalizeConsentLanguage(b.consent_language);
+    const consent_language = serializeConsentLanguage(consentMap);
     const governance_checks = b.governance_checks;
 
     if (!tool_name) {
@@ -1007,7 +1031,7 @@ router.post("/save-tool", requireStarterTier, async (req, res) => {
         .update({
           tool_name,
           tool_type,
-          consent_language: consent_language.trim() || null,
+          consent_language: consent_language || null,
           configuration,
         })
         .eq("id", toolId)
@@ -1027,7 +1051,7 @@ router.post("/save-tool", requireStarterTier, async (req, res) => {
         org_id: orgId,
         tool_name,
         tool_type,
-        consent_language: consent_language.trim() || null,
+        consent_language: consent_language || null,
         configuration,
         created_by: user.id,
       })
@@ -1071,14 +1095,11 @@ router.post("/launch-tool", requireStarterTier, async (req, res) => {
       return res.status(400).json({ error: "Collection tool not found." });
     }
 
-    const consent =
-      typeof row.consent_language === "string"
-        ? row.consent_language.trim()
-        : "";
-    if (!consent) {
+    const consent = parseStoredConsentLanguage(row.consent_language);
+    if (!consent || !consent.en) {
       return res.status(400).json({
         error:
-          "Consent language must be saved before launch. It cannot be empty.",
+          "Consent language must be saved before launch. English consent cannot be empty.",
       });
     }
 
@@ -1381,5 +1402,150 @@ router.post("/gap-review", requireStarterTier, async (req, res) => {
     return res.status(500).json({ error: err.message || "Server error." });
   }
 });
+
+// Downloadable paper instrument (.docx). Starter+. One language per request.
+router.get(
+  "/tools/:toolId/download-instrument",
+  requireStarterTier,
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req, res);
+      if (!user) return;
+
+      const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+      if (orgError) {
+        return res.status(400).json({ error: orgError });
+      }
+
+      const toolId =
+        typeof req.params.toolId === "string" ? req.params.toolId.trim() : "";
+      if (!toolId) {
+        return res.status(400).json({ error: "tool_id is required." });
+      }
+
+      const { data: tool, error: findErr } = await supabase
+        .from("collection_tools")
+        .select("*")
+        .eq("id", toolId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+
+      if (findErr || !tool) {
+        return res.status(400).json({ error: "Collection tool not found." });
+      }
+
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("name, languages_served")
+        .eq("id", orgId)
+        .maybeSingle();
+
+      const cfg =
+        tool.configuration && typeof tool.configuration === "object"
+          ? tool.configuration
+          : {};
+      const questions = normalizeQuestions(
+        Array.isArray(cfg.questions) ? cfg.questions : []
+      );
+      const offered = instrumentLanguagesForTool(questions, org || {});
+      const requested =
+        typeof req.query.lang === "string" && req.query.lang.trim()
+          ? req.query.lang.trim().toLowerCase()
+          : "en";
+      const language = offered.includes(requested) ? requested : offered[0] || "en";
+
+      const result = await generateCollectionInstrumentDocx({
+        orgName: org?.name || "",
+        toolName: tool.tool_name || "Collection tool",
+        consentLanguage: parseStoredConsentLanguage(tool.consent_language),
+        questions,
+        language,
+      });
+
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${result.filename}"`
+      );
+      return res.status(200).send(result.buffer);
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message || "Server error." });
+    }
+  }
+);
+
+// Response export (CSV). Starter+.
+router.get(
+  "/tools/:toolId/download-responses",
+  requireStarterTier,
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req, res);
+      if (!user) return;
+
+      const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+      if (orgError) {
+        return res.status(400).json({ error: orgError });
+      }
+
+      const toolId =
+        typeof req.params.toolId === "string" ? req.params.toolId.trim() : "";
+      if (!toolId) {
+        return res.status(400).json({ error: "tool_id is required." });
+      }
+
+      const { data: tool, error: findErr } = await supabase
+        .from("collection_tools")
+        .select("id, org_id, tool_name, configuration")
+        .eq("id", toolId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+
+      if (findErr || !tool) {
+        return res.status(400).json({ error: "Collection tool not found." });
+      }
+
+      const cfg =
+        tool.configuration && typeof tool.configuration === "object"
+          ? tool.configuration
+          : {};
+      const questions = normalizeQuestions(
+        Array.isArray(cfg.questions) ? cfg.questions : []
+      );
+
+      const { data: responses, error: respErr } = await supabase
+        .from("collection_responses")
+        .select("submitted_at, language, response_payload")
+        .eq("org_id", orgId)
+        .eq("collection_tool_id", toolId)
+        .order("submitted_at", { ascending: true });
+
+      if (respErr) {
+        return res.status(400).json({ error: respErr.message });
+      }
+
+      const shaped = shapeResponseCsv({
+        questions,
+        responses: responses || [],
+      });
+      const csv = renderResponseCsv(shaped);
+      const filename = responseCsvFilename(tool.tool_name);
+
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+      );
+      return res.status(200).send(csv);
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message || "Server error." });
+    }
+  }
+);
 
 module.exports = router;

@@ -154,7 +154,11 @@ Write consent text that fits this tool and context.`;
       (response.usage?.output_tokens || 0),
   });
 
-  return { consent_text };
+  // Model still emits a single English string. Adapt to the localized map at
+  // this boundary only. Do not rewrite the prompt.
+  const consent_language = consent_text ? { en: consent_text } : null;
+
+  return { consent_text, consent_language };
 }
 
 module.exports = { agent09_consentDraft };

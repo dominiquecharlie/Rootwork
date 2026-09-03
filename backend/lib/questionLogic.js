@@ -73,6 +73,33 @@ function isBlankQuestionText(rawQ) {
   return true;
 }
 
+// consent_language: bare string -> { en }, or open-ended localized map.
+// Same shape as question text / option labels.
+function normalizeConsentLanguage(raw) {
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith("{")) {
+      try {
+        return normalizeLocalizedMap(JSON.parse(trimmed));
+      } catch {
+        return { en: trimmed };
+      }
+    }
+    return { en: trimmed };
+  }
+  return normalizeLocalizedMap(raw);
+}
+
+function serializeConsentLanguage(map) {
+  if (!map || typeof map !== "object") return null;
+  return JSON.stringify(map);
+}
+
+function parseStoredConsentLanguage(raw) {
+  return normalizeConsentLanguage(raw);
+}
+
 // An option is usable when it carries a non-empty English label (string or label.en).
 function isUsableOption(o) {
   if (typeof o === "string") return o.trim().length > 0;
@@ -577,10 +604,13 @@ module.exports = {
   isNonEmptyAnswer,
   isQuestionVisible,
   isUsableOption,
+  normalizeConsentLanguage,
   normalizeDisplayIf,
   normalizeLocalizedMap,
   normalizeQuestions,
+  parseStoredConsentLanguage,
   resolveDisplayIfValue,
+  serializeConsentLanguage,
   validateQuestionLogic,
   validateResponsePayload,
 };

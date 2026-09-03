@@ -75,6 +75,7 @@ function EngagementTemplates() {
   const [templates, setTemplates] = useState([]);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState("");
+  const [downloadError, setDownloadError] = useState("");
 
   const fetchContext = useCallback(async () => {
     setLoadError("");
@@ -112,6 +113,51 @@ function EngagementTemplates() {
     setTemplates(Array.isArray(body.templates) ? body.templates : []);
     setLoadState("ready");
   }, []);
+
+  async function downloadTemplate(templateId) {
+    setDownloadError("");
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      setDownloadError("Your session has expired. Please sign in again.");
+      return;
+    }
+    const apiBaseUrl =
+      import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/stage02/templates/${encodeURIComponent(templateId)}/download`,
+        {
+          method: "GET",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        }
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setDownloadError(
+          typeof body?.error === "string" && body.error.trim()
+            ? body.error
+            : "Could not download this template."
+        );
+        return;
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const filename = match ? match[1] : "engagement-template.docx";
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setDownloadError(e.message || "Could not download this template.");
+    }
+  }
 
   useEffect(() => {
     fetchContext();
@@ -405,7 +451,7 @@ function EngagementTemplates() {
                 </pre>
                 <button
                   type="button"
-                  onClick={() => {}}
+                  onClick={() => downloadTemplate(t.id)}
                   style={{
                     marginTop: "18px",
                     padding: "10px 18px",
@@ -426,6 +472,19 @@ function EngagementTemplates() {
           </div>
         ) : null}
 
+        {downloadError ? (
+          <p
+            style={{
+              margin: "0 0 16px",
+              color: "#B91C1C",
+              fontFamily: dmSans,
+              fontSize: "0.9rem",
+              textAlign: "center",
+            }}
+          >
+            {downloadError}
+          </p>
+        ) : null}
         {hasTemplates ? <HardStopPrepBlock /> : null}
 
         {hasTemplates ? (
