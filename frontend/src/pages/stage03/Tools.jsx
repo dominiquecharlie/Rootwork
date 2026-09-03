@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import Stage03PrerequisiteGate from "../../components/Stage03PrerequisiteGate";
+import Stage03TierUpgradePrompt from "../../components/Stage03TierUpgradePrompt";
+import {
+  isPrerequisiteGateKind,
+  parseStage03GateResponse,
+} from "../../lib/stage03GateResponse";
 import { supabase } from "../../lib/supabaseClient";
 
 const dmSans = '"DM Sans", system-ui, sans-serif';
@@ -62,11 +68,15 @@ function Tools() {
   const navigate = useNavigate();
   const [tools, setTools] = useState([]);
   const [gapReview, setGapReview] = useState(null);
+  const [prerequisiteGate, setPrerequisiteGate] = useState(null);
+  const [gapTierMessage, setGapTierMessage] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     setLoadError("");
+    setPrerequisiteGate(null);
+    setGapTierMessage("");
     setLoading(true);
     const {
       data: { session },
@@ -86,22 +96,35 @@ function Tools() {
       ]);
       const toolsBody = await toolsRes.json().catch(() => ({}));
       const gapBody = await gapRes.json().catch(() => ({}));
+
       if (!toolsRes.ok) {
-        throw new Error(
-          typeof toolsBody?.error === "string" && toolsBody.error.trim()
-            ? toolsBody.error
-            : "Could not load collection tools."
-        );
+        const parsed = parseStage03GateResponse(toolsRes, toolsBody);
+        if (isPrerequisiteGateKind(parsed.kind)) {
+          setPrerequisiteGate(parsed);
+          return;
+        }
+        setLoadError(parsed.message);
+        return;
       }
+
       if (!gapRes.ok) {
-        throw new Error(
-          typeof gapBody?.error === "string" && gapBody.error.trim()
-            ? gapBody.error
-            : "Could not load gap review."
-        );
+        const parsed = parseStage03GateResponse(gapRes, gapBody);
+        if (isPrerequisiteGateKind(parsed.kind)) {
+          setPrerequisiteGate(parsed);
+          return;
+        }
+        if (parsed.kind === "tier") {
+          setGapTierMessage(parsed.message);
+          setGapReview(null);
+        } else {
+          setLoadError(parsed.message);
+          return;
+        }
+      } else {
+        setGapReview(gapBody.gap_review ?? null);
       }
+
       setTools(Array.isArray(toolsBody?.tools) ? toolsBody.tools : []);
-      setGapReview(gapBody.gap_review ?? null);
     } catch (err) {
       setLoadError(err.message || "Could not load Stage 03 data.");
     } finally {
@@ -117,6 +140,15 @@ function Tools() {
     ? gapReview.recommended_tools
     : [];
   const hasLiveTool = tools.some((t) => Boolean(t.launched_at));
+
+  if (prerequisiteGate) {
+    return (
+      <Stage03PrerequisiteGate
+        kind={prerequisiteGate.kind}
+        message={prerequisiteGate.message}
+      />
+    );
+  }
 
   if (loading) {
     return (
@@ -328,7 +360,11 @@ function Tools() {
           >
             Recommended collection tools
           </h2>
-          <DraftLabel />
+          {gapTierMessage ? (
+            <Stage03TierUpgradePrompt message={gapTierMessage} />
+          ) : (
+            <DraftLabel />
+          )}
           {recommendedTools.length === 0 ? (
             <p
               style={{

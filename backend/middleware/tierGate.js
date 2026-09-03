@@ -31,7 +31,8 @@ function requireTier(...allowedTiers) {
     if (error || !org) {
       return res.status(403).json({
         error: "TIER_GATE",
-        message: "This feature could not verify your organization tier.",
+        message:
+          "Could not verify subscription tier. This feature requires Starter, Growth, or Enterprise.",
         currentTier: null,
         requiredTiers,
       });
@@ -46,14 +47,22 @@ function requireTier(...allowedTiers) {
       return next();
     }
 
+    const starterGrowthEnterprise = new Set(["starter", "growth", "enterprise"]);
+    const allPaid =
+      requiredTiers.length === 3 &&
+      requiredTiers.every((t) => starterGrowthEnterprise.has(t));
     const tierLabel =
       requiredTiers.length === 1
         ? requiredTiers[0]
         : requiredTiers.join(", ");
 
+    const upgradeMessage = allPaid
+      ? "This feature requires a Starter, Growth, or Enterprise plan. Upgrade your workspace to continue."
+      : `This feature requires ${tierLabel} or higher.`;
+
     return res.status(403).json({
       error: "TIER_GATE",
-      message: `This feature requires ${tierLabel} or higher`,
+      message: upgradeMessage,
       currentTier,
       requiredTiers,
     });

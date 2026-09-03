@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
+import Stage03PrerequisiteGate from "../../components/Stage03PrerequisiteGate";
+import Stage03TierUpgradePrompt from "../../components/Stage03TierUpgradePrompt";
+import {
+  isPrerequisiteGateKind,
+  parseStage03GateResponse,
+} from "../../lib/stage03GateResponse";
 import { supabase } from "../../lib/supabaseClient";
 
 const dmSans = '"DM Sans", system-ui, sans-serif';
@@ -80,11 +86,15 @@ function Gaps() {
   const navigate = useNavigate();
   const [gapReview, setGapReview] = useState(null);
   const [orgTier, setOrgTier] = useState("freemium");
+  const [prerequisiteGate, setPrerequisiteGate] = useState(null);
+  const [tierGateMessage, setTierGateMessage] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
 
   const fetchPageData = useCallback(async () => {
     setLoadError("");
+    setPrerequisiteGate(null);
+    setTierGateMessage("");
     setLoading(true);
     const {
       data: { session },
@@ -106,25 +116,31 @@ function Gaps() {
       ]);
       const gapBody = await gapRes.json().catch(() => ({}));
       if (!gapRes.ok) {
-        throw new Error(
-          typeof gapBody?.error === "string" && gapBody.error.trim()
-            ? gapBody.error
-            : "Could not load gap review."
-        );
+        const parsed = parseStage03GateResponse(gapRes, gapBody);
+        if (isPrerequisiteGateKind(parsed.kind)) {
+          setPrerequisiteGate(parsed);
+          return;
+        }
+        if (parsed.kind === "tier") {
+          setTierGateMessage(parsed.message);
+          setGapReview(null);
+        } else {
+          setLoadError(parsed.message);
+          return;
+        }
+      } else {
+        setGapReview(gapBody.gap_review ?? null);
       }
       const meBody = await meRes.json().catch(() => ({}));
       if (!meRes.ok) {
-        throw new Error(
-          typeof meBody?.error === "string" && meBody.error.trim()
-            ? meBody.error
-            : "Could not load organization."
-        );
+        const parsed = parseStage03GateResponse(meRes, meBody);
+        setLoadError(parsed.message);
+        return;
       }
       const rawTier =
         typeof meBody?.org?.tier === "string" ? meBody.org.tier.trim() : "";
       const tier = rawTier ? rawTier.toLowerCase() : "freemium";
       setOrgTier(tier);
-      setGapReview(gapBody.gap_review ?? null);
     } catch (err) {
       setLoadError(err.message || "Could not load gap review.");
     } finally {
@@ -146,6 +162,15 @@ function Gaps() {
     gapReview && Array.isArray(gapReview.recommended_tools)
       ? gapReview.recommended_tools
       : [];
+
+  if (prerequisiteGate) {
+    return (
+      <Stage03PrerequisiteGate
+        kind={prerequisiteGate.kind}
+        message={prerequisiteGate.message}
+      />
+    );
+  }
 
   if (loading) {
     return (
@@ -191,9 +216,11 @@ function Gaps() {
     );
   }
 
-  if (!gapReview) {
+  if (!gapReview && !tierGateMessage) {
     return <Navigate to="/stage03/collect" replace />;
   }
+
+  const showFreemiumBanner = isFreemium || Boolean(tierGateMessage);
 
   return (
     <main
@@ -214,7 +241,10 @@ function Gaps() {
           textAlign: "left",
         }}
       >
-        {isFreemium ? (
+        {showFreemiumBanner ? (
+          tierGateMessage ? (
+            <Stage03TierUpgradePrompt message={tierGateMessage} />
+          ) : (
           <div
             style={{
               marginBottom: "24px",
@@ -257,6 +287,7 @@ function Gaps() {
               Upgrade to Starter
             </button>
           </div>
+          )
         ) : null}
 
         <h1

@@ -41,6 +41,7 @@ async function authenticateUser(req, res, next) {
   }
 
   req.user = {
+    id: user.id,
     userId: user.id,
     orgId: membership.org_id,
     role: membership.role,

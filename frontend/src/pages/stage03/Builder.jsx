@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import RootsLoader from "../../components/RootsLoader";
+import Stage03PrerequisiteGate from "../../components/Stage03PrerequisiteGate";
+import Stage03TierUpgradePrompt from "../../components/Stage03TierUpgradePrompt";
+import {
+  isPrerequisiteGateKind,
+  parseStage03GateResponse,
+} from "../../lib/stage03GateResponse";
 import { supabase } from "../../lib/supabaseClient";
 
 const dmSans = '"DM Sans", system-ui, sans-serif';
@@ -40,6 +46,86 @@ const QUESTION_TYPE_BADGES = {
   number: "Number",
   date: "Date",
 };
+
+const DISPLAY_IF_OPERATOR_OPTIONS = [
+  { value: "equals", label: "is" },
+  { value: "not_equals", label: "is not" },
+  { value: "answered", label: "was answered" },
+  { value: "not_answered", label: "was not answered" },
+];
+
+const DISPLAY_IF_OPS = new Set([
+  "equals",
+  "not_equals",
+  "answered",
+  "not_answered",
+]);
+
+function parseDisplayIf(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const question_id =
+    typeof raw.question_id === "string" ? raw.question_id.trim() : "";
+  const operator =
+    typeof raw.operator === "string" ? raw.operator.trim() : "";
+  if (!question_id || !DISPLAY_IF_OPS.has(operator)) return null;
+  if (operator === "equals" || operator === "not_equals") {
+    const value = typeof raw.value === "string" ? raw.value.trim() : "";
+    if (!value) return null;
+    return { question_id, operator, value };
+  }
+  return { question_id, operator };
+}
+
+function getDependentsOnQuestion(questions, targetId) {
+  return questions.filter((q) => {
+    const di = parseDisplayIf(q.display_if);
+    return di && di.question_id === targetId;
+  });
+}
+
+function dependentQuestionNames(dependents) {
+  return dependents
+    .map((q) => (q.text || "").trim() || q.id)
+    .join("; ");
+}
+
+function simulateQuestionSwap(questions, i, j) {
+  const next = [...questions];
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
+}
+
+function getMoveBlockReason(questions, id, delta) {
+  const i = questions.findIndex((q) => q.id === id);
+  if (i < 0) return null;
+  const j = i + delta;
+  if (j < 0 || j >= questions.length) return null;
+
+  const next = simulateQuestionSwap(questions, i, j);
+  const movedIdx = j;
+  const movedId = questions[i].id;
+
+  const dep = parseDisplayIf(questions[i].display_if);
+  if (dep) {
+    const refIdx = next.findIndex((q) => q.id === dep.question_id);
+    if (refIdx >= 0 && refIdx >= movedIdx) {
+      const ref = next[refIdx];
+      const refName = (ref.text || "").trim() || ref.id;
+      return `Cannot move this question before "${refName}", which it depends on.`;
+    }
+  }
+
+  const dependents = getDependentsOnQuestion(questions, movedId);
+  const blocked = dependents.filter((d) => {
+    const depIdx = next.findIndex((q) => q.id === d.id);
+    return depIdx >= 0 && depIdx <= movedIdx;
+  });
+  if (blocked.length > 0) {
+    return `Cannot move this question after questions that depend on it: ${dependentQuestionNames(blocked)}`;
+  }
+
+  return null;
+}
 
 function newId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -220,6 +306,14 @@ function Builder() {
   const [qRequired, setQRequired] = useState(true);
   const [qOptions, setQOptions] = useState([]);
   const [newOptionText, setNewOptionText] = useState("");
+  const [showConditionSection, setShowConditionSection] = useState(false);
+  const [qCondRefId, setQCondRefId] = useState("");
+  const [qCondOp, setQCondOp] = useState("equals");
+  const [qCondValue, setQCondValue] = useState("");
+  const [qTextError, setQTextError] = useState("");
+  const [formBlockMessage, setFormBlockMessage] = useState("");
+  const [questionErrors, setQuestionErrors] = useState({});
+  const [deleteBlockMessage, setDeleteBlockMessage] = useState("");
 
   const [consentLanguage, setConsentLanguage] = useState("");
 
@@ -239,6 +333,8 @@ function Builder() {
 
   const [saveError, setSaveError] = useState("");
   const [launchError, setLaunchError] = useState("");
+  const [prerequisiteGate, setPrerequisiteGate] = useState(null);
+  const [tierNotice, setTierNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [launching, setLaunching] = useState(false);
 
@@ -283,7 +379,16 @@ function Builder() {
           headers: { Authorization: `Bearer ${token}` },
         });
         const body = await response.json().catch(() => ({}));
-        if (!response.ok || cancelled) return;
+        if (!response.ok) {
+          if (!cancelled) {
+            const parsed = parseStage03GateResponse(response, body);
+            if (isPrerequisiteGateKind(parsed.kind)) {
+              setPrerequisiteGate(parsed);
+            }
+          }
+          return;
+        }
+        if (cancelled) return;
         const tools = Array.isArray(body?.tools) ? body.tools : [];
         const tool = tools.find((t) => t.id === toolIdFromUrl);
         if (!tool || cancelled) return;
@@ -319,6 +424,10 @@ function Builder() {
             }
             if (typeof q.rationale === "string" && q.rationale.trim()) {
               row.rationale = q.rationale.trim();
+            }
+            const display_if = parseDisplayIf(q.display_if);
+            if (display_if) {
+              row.display_if = display_if;
             }
             return row;
           })
@@ -433,11 +542,14 @@ function Builder() {
         }
         if (!response.ok) {
           const err = await response.json().catch(() => ({}));
-          const msg =
-            typeof err?.error === "string" && err.error.trim()
-              ? err.error.trim()
-              : "Could not generate suggestions.";
-          setSuggestError(msg);
+          const parsed = parseStage03GateResponse(response, err);
+          if (isPrerequisiteGateKind(parsed.kind)) {
+            setPrerequisiteGate(parsed);
+          } else if (parsed.kind === "tier") {
+            setTierNotice(parsed.message);
+          } else {
+            setSuggestError(parsed.message);
+          }
           setIsLoadingSuggestions(false);
           return;
         }
@@ -516,6 +628,12 @@ function Builder() {
     setQRequired(true);
     setQOptions([]);
     setNewOptionText("");
+    setShowConditionSection(false);
+    setQCondRefId("");
+    setQCondOp("equals");
+    setQCondValue("");
+    setQTextError("");
+    setFormBlockMessage("");
     setShowQuestionForm(true);
   }
 
@@ -526,6 +644,20 @@ function Builder() {
     setQRequired(Boolean(q.required));
     setQOptions(Array.isArray(q.options) ? [...q.options] : []);
     setNewOptionText("");
+    const di = parseDisplayIf(q.display_if);
+    if (di) {
+      setShowConditionSection(true);
+      setQCondRefId(di.question_id);
+      setQCondOp(di.operator);
+      setQCondValue(typeof di.value === "string" ? di.value : "");
+    } else {
+      setShowConditionSection(false);
+      setQCondRefId("");
+      setQCondOp("equals");
+      setQCondValue("");
+    }
+    setQTextError("");
+    setFormBlockMessage("");
     setShowQuestionForm(true);
   }
 
@@ -535,11 +667,76 @@ function Builder() {
     setQText("");
     setQOptions([]);
     setNewOptionText("");
+    setShowConditionSection(false);
+    setQCondRefId("");
+    setQCondOp("equals");
+    setQCondValue("");
+    setQTextError("");
+    setFormBlockMessage("");
   }
 
   function saveQuestionFromForm() {
     const text = qText.trim();
-    if (!text) return;
+    if (!text) {
+      setQTextError("Question text cannot be empty.");
+      return;
+    }
+    setQTextError("");
+    setFormBlockMessage("");
+
+    if (editingQuestionId) {
+      const editIdx = questions.findIndex((q) => q.id === editingQuestionId);
+      const original = editIdx >= 0 ? questions[editIdx] : null;
+      if (original) {
+        const later = questions.slice(editIdx + 1);
+        if (
+          original.type === "multiple_choice" &&
+          qType !== "multiple_choice"
+        ) {
+          const blocked = later.filter((q) => {
+            const di = parseDisplayIf(q.display_if);
+            return (
+              di &&
+              di.question_id === editingQuestionId &&
+              (di.operator === "equals" || di.operator === "not_equals")
+            );
+          });
+          if (blocked.length > 0) {
+            setFormBlockMessage(
+              `Cannot change type. These questions use answer conditions on this question: ${dependentQuestionNames(blocked)}`
+            );
+            return;
+          }
+        }
+        if (original.type === "multiple_choice" && qType === "multiple_choice") {
+          const oldOpts = Array.isArray(original.options) ? original.options : [];
+          const removedOrChanged = oldOpts.filter((opt) => !qOptions.includes(opt));
+          if (removedOrChanged.length > 0) {
+            const blocked = [];
+            const seen = new Set();
+            for (const q of later) {
+              const di = parseDisplayIf(q.display_if);
+              if (
+                di &&
+                di.question_id === editingQuestionId &&
+                removedOrChanged.includes(di.value) &&
+                !seen.has(q.id)
+              ) {
+                seen.add(q.id);
+                blocked.push(q);
+              }
+            }
+            if (blocked.length > 0) {
+              setFormBlockMessage(
+                `Cannot change these options. These questions depend on the removed or edited option text: ${dependentQuestionNames(blocked)}`
+              );
+              return;
+            }
+          }
+        }
+      }
+    }
+
     const base = {
       id: editingQuestionId || newId(),
       text,
@@ -549,12 +746,26 @@ function Builder() {
     if (qType === "multiple_choice") {
       base.options = qOptions.length > 0 ? [...qOptions] : [];
     }
+    if (qCondRefId.trim()) {
+      const display_if = {
+        question_id: qCondRefId.trim(),
+        operator: qCondOp,
+      };
+      if (qCondOp === "equals" || qCondOp === "not_equals") {
+        const value = qCondValue.trim();
+        if (value) display_if.value = value;
+      }
+      base.display_if = display_if;
+    }
     if (editingQuestionId) {
       setQuestions((prev) =>
         prev.map((q) => {
           if (q.id !== editingQuestionId) return q;
           const next = { ...base };
           if (q.source === "user") next.source = "user";
+          if (typeof q.rationale === "string" && q.rationale.trim()) {
+            next.rationale = q.rationale;
+          }
           return next;
         })
       );
@@ -565,6 +776,12 @@ function Builder() {
   }
 
   function moveQuestion(id, delta) {
+    const reason = getMoveBlockReason(questions, id, delta);
+    if (reason) {
+      setDeleteBlockMessage(reason);
+      return;
+    }
+    setDeleteBlockMessage("");
     setQuestions((prev) => {
       const i = prev.findIndex((q) => q.id === id);
       if (i < 0) return prev;
@@ -577,6 +794,14 @@ function Builder() {
   }
 
   function deleteQuestion(id) {
+    const dependents = getDependentsOnQuestion(questions, id);
+    if (dependents.length > 0) {
+      setDeleteBlockMessage(
+        `Cannot delete this question. These questions depend on it: ${dependentQuestionNames(dependents)}`
+      );
+      return;
+    }
+    setDeleteBlockMessage("");
     setQuestions((prev) => prev.filter((q) => q.id !== id));
   }
 
@@ -601,19 +826,26 @@ function Builder() {
       tool_name: toolName.trim(),
       tool_type: toolType,
       who_completes: whoCompletes,
-      questions: questions.map((q) => ({
-        id: q.id,
-        text: q.text,
-        type: q.type,
-        required: q.required,
-        ...(q.source === "ai" || q.source === "user" ? { source: q.source } : {}),
-        ...(typeof q.rationale === "string" && q.rationale.trim()
-          ? { rationale: q.rationale.trim() }
-          : {}),
-        ...(q.type === "multiple_choice" && Array.isArray(q.options)
-          ? { options: q.options }
-          : {}),
-      })),
+      questions: questions.map((q) => {
+        const row = {
+          id: q.id,
+          text: q.text,
+          type: q.type,
+          required: q.required,
+          ...(q.source === "ai" || q.source === "user" ? { source: q.source } : {}),
+          ...(typeof q.rationale === "string" && q.rationale.trim()
+            ? { rationale: q.rationale.trim() }
+            : {}),
+          ...(q.type === "multiple_choice" && Array.isArray(q.options)
+            ? { options: q.options }
+            : {}),
+        };
+        const display_if = parseDisplayIf(q.display_if);
+        if (display_if) {
+          row.display_if = display_if;
+        }
+        return row;
+      }),
       consent_language: consentLanguage,
       governance_checks: {
         consent_reviewed: govConsent,
@@ -635,6 +867,9 @@ function Builder() {
 
   async function handleSaveDraft() {
     setSaveError("");
+    setTierNotice("");
+    setQuestionErrors({});
+    setDeleteBlockMessage("");
     setSaving(true);
     const token = await getToken();
     if (!token) {
@@ -644,6 +879,22 @@ function Builder() {
     }
     if (!toolName.trim()) {
       setSaveError("Tool name is required.");
+      setSaving(false);
+      return;
+    }
+    if (showQuestionForm && !qText.trim()) {
+      setQTextError("Question text cannot be empty.");
+      setSaving(false);
+      return;
+    }
+    const blankMap = {};
+    for (const q of questions) {
+      if (!String(q.text || "").trim()) {
+        blankMap[q.id] = "Question text cannot be empty.";
+      }
+    }
+    if (Object.keys(blankMap).length > 0) {
+      setQuestionErrors(blankMap);
       setSaving(false);
       return;
     }
@@ -658,12 +909,34 @@ function Builder() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(
-          typeof body?.error === "string" && body.error.trim()
-            ? body.error
-            : "Could not save draft."
-        );
+        const errs = Array.isArray(body?.errors) ? body.errors : [];
+        if (errs.length > 0) {
+          const map = {};
+          for (const e of errs) {
+            if (typeof e?.question_id === "string" && e.question_id.trim()) {
+              map[e.question_id.trim()] =
+                typeof e.error === "string" && e.error.trim()
+                  ? e.error.trim()
+                  : "Invalid question.";
+            }
+          }
+          if (Object.keys(map).length > 0) {
+            setQuestionErrors(map);
+            setSaving(false);
+            return;
+          }
+        }
+        const parsed = parseStage03GateResponse(response, body);
+        if (parsed.kind === "tier") {
+          setTierNotice(parsed.message);
+          setSaving(false);
+          return;
+        }
+        setSaveError(parsed.message);
+        setSaving(false);
+        return;
       }
+      setQuestionErrors({});
       if (body?.tool?.id) {
         setCollectionToolId(body.tool.id);
       }
@@ -680,6 +953,7 @@ function Builder() {
 
   async function handleLaunch() {
     setLaunchError("");
+    setTierNotice("");
     if (!collectionToolId) {
       setLaunchError("Save a draft first so this tool has an id.");
       return;
@@ -710,11 +984,14 @@ function Builder() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(
-          typeof body?.error === "string" && body.error.trim()
-            ? body.error
-            : "Could not launch tool."
-        );
+        const parsed = parseStage03GateResponse(response, body);
+        if (parsed.kind === "tier") {
+          setTierNotice(parsed.message);
+        } else {
+          setLaunchError(parsed.message);
+        }
+        setLaunching(false);
+        return;
       }
       if (!body?.success) {
         throw new Error("Could not launch tool.");
@@ -729,11 +1006,38 @@ function Builder() {
 
   const badgeStyle = toolTypeBadgeStyle(toolType);
 
+  const priorQuestionsForForm = (() => {
+    if (editingQuestionId) {
+      const idx = questions.findIndex((q) => q.id === editingQuestionId);
+      return idx >= 0 ? questions.slice(0, idx) : questions;
+    }
+    return questions;
+  })();
+  const condRefQuestion = priorQuestionsForForm.find(
+    (q) => q.id === qCondRefId
+  );
+  const condValueOptions =
+    condRefQuestion &&
+    condRefQuestion.type === "multiple_choice" &&
+    Array.isArray(condRefQuestion.options)
+      ? condRefQuestion.options
+      : [];
+
   const showSurveyPurposeStep =
     hydrationComplete &&
     questions.length === 0 &&
     toolType === "survey" &&
-    !surveyPurpose;
+    !surveyPurpose &&
+    !prerequisiteGate;
+
+  if (prerequisiteGate) {
+    return (
+      <Stage03PrerequisiteGate
+        kind={prerequisiteGate.kind}
+        message={prerequisiteGate.message}
+      />
+    );
+  }
 
   if (showSurveyPurposeStep) {
     return (
@@ -911,6 +1215,7 @@ function Builder() {
           boxSizing: "border-box",
         }}
       >
+        {tierNotice ? <Stage03TierUpgradePrompt message={tierNotice} /> : null}
         {suggestError ? (
           <p
             style={{
@@ -1104,7 +1409,11 @@ function Builder() {
                 No questions yet. Use Add question below.
               </p>
             ) : (
-              questions.map((q, index) => (
+              questions.map((q, index) => {
+                const moveUpBlock = getMoveBlockReason(questions, q.id, -1);
+                const moveDownBlock = getMoveBlockReason(questions, q.id, 1);
+                const moveBlockReason = moveUpBlock || moveDownBlock;
+                return (
                 <article
                   key={q.id}
                   style={{
@@ -1112,7 +1421,9 @@ function Builder() {
                     gap: "12px",
                     alignItems: "flex-start",
                     backgroundColor: "#FFFFFF",
-                    border: "1px solid #E5E7EB",
+                    border: questionErrors[q.id]
+                      ? "1px solid #FECACA"
+                      : "1px solid #E5E7EB",
                     borderRadius: "10px",
                     padding: "16px",
                   }}
@@ -1123,19 +1434,24 @@ function Builder() {
                       flexDirection: "column",
                       gap: "6px",
                       paddingTop: "4px",
+                      maxWidth: "88px",
                     }}
                   >
                     <button
                       type="button"
-                      title="Move up"
-                      disabled={index === 0}
+                      title={moveUpBlock || "Move up"}
+                      disabled={index === 0 || Boolean(moveUpBlock)}
                       onClick={() => moveQuestion(q.id, -1)}
                       style={{
                         border: "1px solid #E5E7EB",
                         borderRadius: "6px",
                         backgroundColor: "#FFFFFF",
-                        color: index === 0 ? "#D1D5DB" : muted,
-                        cursor: index === 0 ? "not-allowed" : "pointer",
+                        color:
+                          index === 0 || moveUpBlock ? "#D1D5DB" : muted,
+                        cursor:
+                          index === 0 || moveUpBlock
+                            ? "not-allowed"
+                            : "pointer",
                         fontFamily: dmSans,
                         fontSize: "0.7rem",
                         fontWeight: 600,
@@ -1146,17 +1462,21 @@ function Builder() {
                     </button>
                     <button
                       type="button"
-                      title="Move down"
-                      disabled={index >= questions.length - 1}
+                      title={moveDownBlock || "Move down"}
+                      disabled={
+                        index >= questions.length - 1 || Boolean(moveDownBlock)
+                      }
                       onClick={() => moveQuestion(q.id, 1)}
                       style={{
                         border: "1px solid #E5E7EB",
                         borderRadius: "6px",
                         backgroundColor: "#FFFFFF",
                         color:
-                          index >= questions.length - 1 ? "#D1D5DB" : muted,
+                          index >= questions.length - 1 || moveDownBlock
+                            ? "#D1D5DB"
+                            : muted,
                         cursor:
-                          index >= questions.length - 1
+                          index >= questions.length - 1 || moveDownBlock
                             ? "not-allowed"
                             : "pointer",
                         fontFamily: dmSans,
@@ -1167,6 +1487,19 @@ function Builder() {
                     >
                       Down
                     </button>
+                    {moveBlockReason ? (
+                      <p
+                        style={{
+                          margin: 0,
+                          color: "#B91C1C",
+                          fontFamily: dmSans,
+                          fontSize: "0.62rem",
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        {moveBlockReason}
+                      </p>
+                    ) : null}
                   </div>
                   <div
                     style={{
@@ -1221,6 +1554,22 @@ function Builder() {
                           Added by you
                         </span>
                       ) : null}
+                      {q.display_if ? (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            padding: "3px 10px",
+                            borderRadius: "999px",
+                            fontFamily: dmSans,
+                            fontSize: "0.68rem",
+                            fontWeight: 600,
+                            backgroundColor: "#FEF3C7",
+                            color: "#92400E",
+                          }}
+                        >
+                          Conditional
+                        </span>
+                      ) : null}
                     </div>
                     <p
                       style={{
@@ -1234,6 +1583,19 @@ function Builder() {
                     >
                       {q.text}
                     </p>
+                    {questionErrors[q.id] ? (
+                      <p
+                        style={{
+                          margin: "0 0 8px",
+                          color: "#B91C1C",
+                          fontFamily: dmSans,
+                          fontSize: "0.82rem",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {questionErrors[q.id]}
+                      </p>
+                    ) : null}
                     <div
                       style={{
                         display: "flex",
@@ -1328,9 +1690,25 @@ function Builder() {
                     </div>
                   </div>
                 </article>
-              ))
+                );
+              })
             )}
           </div>
+
+          {deleteBlockMessage ? (
+            <p
+              style={{
+                margin: "0 0 12px",
+                color: "#B91C1C",
+                fontFamily: dmSans,
+                fontSize: "0.88rem",
+                lineHeight: 1.45,
+                textAlign: "center",
+              }}
+            >
+              {deleteBlockMessage}
+            </p>
+          ) : null}
 
           {!showQuestionForm ? (
             <div style={{ textAlign: "center" }}>
@@ -1366,11 +1744,45 @@ function Builder() {
                 <textarea
                   required
                   value={qText}
-                  onChange={(e) => setQText(e.target.value)}
+                  onChange={(e) => {
+                    setQText(e.target.value);
+                    if (qTextError) setQTextError("");
+                  }}
                   rows={3}
-                  style={{ ...inputStyle, resize: "vertical", minHeight: "72px" }}
+                  style={{
+                    ...inputStyle,
+                    resize: "vertical",
+                    minHeight: "72px",
+                    borderColor: qTextError ? "#F87171" : "#A8D4AA",
+                  }}
                 />
+                {qTextError ? (
+                  <span
+                    style={{
+                      display: "block",
+                      marginTop: "6px",
+                      color: "#B91C1C",
+                      fontFamily: dmSans,
+                      fontSize: "0.82rem",
+                    }}
+                  >
+                    {qTextError}
+                  </span>
+                ) : null}
               </label>
+              {formBlockMessage ? (
+                <p
+                  style={{
+                    margin: "0 0 14px",
+                    color: "#B91C1C",
+                    fontFamily: dmSans,
+                    fontSize: "0.82rem",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {formBlockMessage}
+                </p>
+              ) : null}
               <label style={{ display: "block", marginBottom: "14px" }}>
                 <span style={labelStyle}>Question type</span>
                 <select
@@ -1461,6 +1873,121 @@ function Builder() {
                 />
                 Required?
               </label>
+              <div
+                style={{
+                  marginBottom: "16px",
+                  borderTop: "1px solid #E5E7EB",
+                  paddingTop: "14px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowConditionSection((open) => !open)}
+                  style={{
+                    border: "none",
+                    background: "none",
+                    padding: 0,
+                    color: green,
+                    fontFamily: dmSans,
+                    fontSize: "0.9rem",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                  }}
+                >
+                  Show this question only if
+                </button>
+                {showConditionSection ? (
+                  priorQuestionsForForm.length === 0 ? (
+                    <p
+                      style={{
+                        margin: "12px 0 0",
+                        color: muted,
+                        fontFamily: dmSans,
+                        fontSize: "0.88rem",
+                      }}
+                    >
+                      The first question always shows.
+                    </p>
+                  ) : (
+                    <div
+                      style={{
+                        marginTop: "12px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "12px",
+                      }}
+                    >
+                      <label style={{ display: "block" }}>
+                        <span style={labelStyle}>Earlier question</span>
+                        <select
+                          value={qCondRefId}
+                          onChange={(e) => {
+                            const next = e.target.value;
+                            setQCondRefId(next);
+                            setQCondValue("");
+                            if (!next) setQCondOp("equals");
+                          }}
+                          style={inputStyle}
+                        >
+                          <option value="">No condition</option>
+                          {priorQuestionsForForm.map((pq) => (
+                            <option key={pq.id} value={pq.id}>
+                              {pq.text.length > 80
+                                ? `${pq.text.slice(0, 80)}...`
+                                : pq.text}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {qCondRefId ? (
+                        <>
+                          <label style={{ display: "block" }}>
+                            <span style={labelStyle}>Condition</span>
+                            <select
+                              value={qCondOp}
+                              onChange={(e) => {
+                                setQCondOp(e.target.value);
+                                if (
+                                  e.target.value !== "equals" &&
+                                  e.target.value !== "not_equals"
+                                ) {
+                                  setQCondValue("");
+                                }
+                              }}
+                              style={inputStyle}
+                            >
+                              {DISPLAY_IF_OPERATOR_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                  {o.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          {qCondOp === "equals" ||
+                          qCondOp === "not_equals" ? (
+                            <label style={{ display: "block" }}>
+                              <span style={labelStyle}>Value</span>
+                              <select
+                                value={qCondValue}
+                                onChange={(e) => setQCondValue(e.target.value)}
+                                style={inputStyle}
+                              >
+                                <option value="">Select an option</option>
+                                {condValueOptions.map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                  )
+                ) : null}
+              </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
                 <button
                   type="button"

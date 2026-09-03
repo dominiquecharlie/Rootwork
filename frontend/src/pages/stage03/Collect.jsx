@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import RootsLoader from "../../components/RootsLoader";
+import Stage03PrerequisiteGate from "../../components/Stage03PrerequisiteGate";
+import Stage03TierUpgradePrompt from "../../components/Stage03TierUpgradePrompt";
+import {
+  isPrerequisiteGateKind,
+  parseStage03GateResponse,
+} from "../../lib/stage03GateResponse";
 import { supabase } from "../../lib/supabaseClient";
 
 const dmSans = '"DM Sans", system-ui, sans-serif';
@@ -71,6 +77,9 @@ function StepCard({ stepLabel, title, body }) {
 function Collect() {
   const navigate = useNavigate();
   const [gapReview, setGapReview] = useState(null);
+  const [prerequisiteGate, setPrerequisiteGate] = useState(null);
+  const [tierGateMessage, setTierGateMessage] = useState("");
+  const [tierPostMessage, setTierPostMessage] = useState("");
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -78,6 +87,8 @@ function Collect() {
 
   const fetchGapReview = useCallback(async () => {
     setLoadError("");
+    setPrerequisiteGate(null);
+    setTierGateMessage("");
     setLoading(true);
     const {
       data: { session },
@@ -95,11 +106,18 @@ function Collect() {
       });
       const gapBody = await gapRes.json().catch(() => ({}));
       if (!gapRes.ok) {
-        throw new Error(
-          typeof gapBody?.error === "string" && gapBody.error.trim()
-            ? gapBody.error
-            : "Could not load gap review."
-        );
+        const parsed = parseStage03GateResponse(gapRes, gapBody);
+        if (isPrerequisiteGateKind(parsed.kind)) {
+          setPrerequisiteGate(parsed);
+          return;
+        }
+        if (parsed.kind === "tier") {
+          setTierGateMessage(parsed.message);
+          setGapReview(null);
+          return;
+        }
+        setLoadError(parsed.message);
+        return;
       }
       setGapReview(gapBody.gap_review ?? null);
     } catch (err) {
@@ -122,6 +140,7 @@ function Collect() {
 
   async function handleGapReview() {
     setGapError("");
+    setTierPostMessage("");
     setGenerating(true);
     const token = await getSessionToken();
     if (!token) {
@@ -142,11 +161,17 @@ function Collect() {
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(
-          typeof body?.error === "string" && body.error.trim()
-            ? body.error
-            : "Could not generate gap review."
-        );
+        const parsed = parseStage03GateResponse(response, body);
+        if (isPrerequisiteGateKind(parsed.kind)) {
+          setPrerequisiteGate(parsed);
+          return;
+        }
+        if (parsed.kind === "tier") {
+          setTierPostMessage(parsed.message);
+          return;
+        }
+        setGapError(parsed.message);
+        return;
       }
       const gr = body?.gap_review;
       if (!gr) throw new Error("Invalid server response.");
@@ -174,6 +199,15 @@ function Collect() {
     : [];
   const showGapResults = Boolean(gapReview);
   const showGenerateBlock = !gapReview;
+
+  if (prerequisiteGate) {
+    return (
+      <Stage03PrerequisiteGate
+        kind={prerequisiteGate.kind}
+        message={prerequisiteGate.message}
+      />
+    );
+  }
 
   if (loading) {
     return (
@@ -291,6 +325,12 @@ function Collect() {
         >
           Stage 03: Collect
         </h1>
+        {tierGateMessage ? (
+          <Stage03TierUpgradePrompt
+            message={tierGateMessage}
+            style={{ margin: "0 auto 24px", maxWidth: "600px", textAlign: "left" }}
+          />
+        ) : null}
         <p
           style={{
             margin: "0 auto 32px",
@@ -350,6 +390,9 @@ function Collect() {
               Claude will review your funder metrics, community priorities, and
               program design to identify what you need to collect and how.
             </p>
+            {tierPostMessage ? (
+              <Stage03TierUpgradePrompt message={tierPostMessage} />
+            ) : null}
             {gapError ? (
               <p
                 style={{

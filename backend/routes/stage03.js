@@ -1,5 +1,11 @@
 const express = require("express");
 const { supabase } = require("../lib/supabaseClient");
+const { authenticateUser } = require("../middleware/authMiddleware");
+const {
+  requireCommunityVoice,
+  requireReconciliation,
+} = require("../middleware/stageGates");
+const { requireTier } = require("../middleware/tierGate");
 const { agent08_collectionGapReview } = require("../agents/agent08_collectionGapReview");
 const { agent09_consentDraft } = require("../agents/agent09_consentDraft");
 const {
@@ -11,8 +17,11 @@ const {
 } = require("../lib/questionLogic");
 
 const router = express.Router();
+const requireStarterTier = requireTier("starter", "growth", "enterprise");
 
-const PAID_TIERS = new Set(["starter", "growth", "enterprise"]);
+router.use(authenticateUser);
+router.use(requireCommunityVoice);
+router.use(requireReconciliation);
 
 async function getAuthenticatedUser(req, res) {
   const authHeader = req.headers.authorization || "";
@@ -56,37 +65,6 @@ async function getOrgIdForUser(userId) {
   }
 
   return { orgId: membership.org_id };
-}
-
-async function assertPaidTier(orgId, res) {
-  const { data: org, error } = await supabase
-    .from("organizations")
-    .select("tier")
-    .eq("id", orgId)
-    .maybeSingle();
-
-  if (error || !org) {
-    res.status(403).json({
-      error:
-        "Could not verify subscription tier. Gap review requires Starter, Growth, or Enterprise.",
-    });
-    return false;
-  }
-
-  const tier =
-    typeof org.tier === "string" && org.tier.trim()
-      ? org.tier.trim()
-      : "freemium";
-
-  if (!PAID_TIERS.has(tier)) {
-    res.status(403).json({
-      error:
-        "Gap review requires a Starter, Growth, or Enterprise plan. Upgrade your workspace to continue.",
-    });
-    return false;
-  }
-
-  return true;
 }
 
 async function loadGapReviewData(orgId) {
@@ -718,30 +696,7 @@ function resolveToolId(body) {
   return a;
 }
 
-router.get("/test-hardcoded", (req, res) => {
-  if (process.env.NODE_ENV === "production") {
-    return res.status(404).json({ error: "Not found." });
-  }
-  const tool_type = normalizeToolType(req.query.tool_type);
-  const survey_purpose = String(req.query.survey_purpose || "")
-    .toLowerCase()
-    .trim();
-  const hardcoded = getHardcodedQuestions(
-    req.query.tool_type,
-    req.query.survey_purpose,
-    null
-  );
-  return res.status(200).json({
-    query: req.query,
-    normalized: { tool_type, survey_purpose },
-    hardcodedPresent: Boolean(hardcoded),
-    questionCount: hardcoded?.questions?.length ?? 0,
-    tool_notes: hardcoded?.tool_notes ?? null,
-    firstQuestionText: hardcoded?.questions?.[0]?.text ?? null,
-  });
-});
-
-router.post("/suggest-questions", async (req, res) => {
+router.post("/suggest-questions", requireStarterTier, async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req, res);
     if (!user) return;
@@ -750,9 +705,6 @@ router.post("/suggest-questions", async (req, res) => {
     if (orgError) {
       return res.status(400).json({ error: orgError });
     }
-
-    const tierOk = await assertPaidTier(orgId, res);
-    if (!tierOk) return;
 
     const b = req.body || {};
     const tool_name = typeof b.tool_name === "string" ? b.tool_name.trim() : "";
@@ -895,7 +847,7 @@ router.post("/suggest-questions", async (req, res) => {
   }
 });
 
-router.post("/consent-draft", async (req, res) => {
+router.post("/consent-draft", requireStarterTier, async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req, res);
     if (!user) return;
@@ -951,7 +903,7 @@ router.post("/consent-draft", async (req, res) => {
   }
 });
 
-router.post("/save-tool", async (req, res) => {
+router.post("/save-tool", requireStarterTier, async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req, res);
     if (!user) return;
@@ -1072,7 +1024,7 @@ router.post("/save-tool", async (req, res) => {
   }
 });
 
-router.post("/launch-tool", async (req, res) => {
+router.post("/launch-tool", requireStarterTier, async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req, res);
     if (!user) return;
@@ -1204,7 +1156,7 @@ router.get("/tools", async (req, res) => {
   }
 });
 
-router.get("/gap-review", async (req, res) => {
+router.get("/gap-review", requireStarterTier, async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req, res);
     if (!user) return;
@@ -1232,7 +1184,7 @@ router.get("/gap-review", async (req, res) => {
   }
 });
 
-router.post("/gap-review", async (req, res) => {
+router.post("/gap-review", requireStarterTier, async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req, res);
     if (!user) return;
@@ -1241,9 +1193,6 @@ router.post("/gap-review", async (req, res) => {
     if (orgError) {
       return res.status(400).json({ error: orgError });
     }
-
-    const tierOk = await assertPaidTier(orgId, res);
-    if (!tierOk) return;
 
     const inputs = await loadGapReviewData(orgId);
 
