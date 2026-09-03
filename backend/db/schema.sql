@@ -745,6 +745,7 @@ alter table public.organizations add column if not exists org_phase text;
 
 alter table public.program_designs add column if not exists claude_alignment_flags jsonb not null default '{}'::jsonb;
 
+
 alter table public.stage_progress drop constraint if exists stage_progress_stage_check;
 alter table public.stage_progress add constraint stage_progress_stage_check check (
   stage in (
@@ -816,3 +817,51 @@ create index if not exists stage01_program_documents_org_id_idx
   on public.stage01_program_documents (org_id);
 
 alter table public.stage01_program_documents add column if not exists extracted_data jsonb;
+
+-- Public respondent form: opaque token separate from the tool id.
+-- Generated once at first launch. Rotatable without changing the tool row id.
+alter table public.collection_tools
+  add column if not exists public_token text;
+
+create unique index if not exists collection_tools_public_token_uidx
+  on public.collection_tools (public_token)
+  where public_token is not null;
+
+alter table public.collection_responses
+  add column if not exists consent_acknowledged_at timestamptz;
+
+alter table public.collection_responses
+  add column if not exists language text;
+
+-- collection_responses holds what community members said. Rootwork's values
+-- architecture treats that as stored-as-entered and never rewritten. An org
+-- member being able to UPDATE a response directly through the anon client
+-- contradicts that at the data layer, which is exactly where this product
+-- enforces its values.
+--
+-- Deletion still has to be possible, because an opt-out mechanism is a required
+-- governance field. It goes through a backend route with an audit trail later,
+-- not a direct client delete.
+--
+-- Consequence: the backend (service role) is the only writer to this table.
+-- When staff-entry tools get built for who_completes = staff_members, that
+-- path must also go through the backend, not the anon client.
+drop policy if exists "collection_responses_write" on public.collection_responses;
+drop policy if exists "collection_responses_update" on public.collection_responses;
+drop policy if exists "collection_responses_delete" on public.collection_responses;
+
+create policy "collection_responses_insert_server_only"
+  on public.collection_responses
+  for insert
+  with check (false);
+
+create policy "collection_responses_update_server_only"
+  on public.collection_responses
+  for update
+  using (false)
+  with check (false);
+
+create policy "collection_responses_delete_server_only"
+  on public.collection_responses
+  for delete
+  using (false);

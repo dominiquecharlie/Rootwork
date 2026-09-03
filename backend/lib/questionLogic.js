@@ -171,8 +171,9 @@ function normalizeOptions(rawOptions, questionId) {
   return out;
 }
 
-// Response submission will evaluate required only when a question is visible.
-// A hidden required question must not block submission. Form not built yet.
+// Required is evaluated only when a question is visible. A hidden required
+// question must not block submission. See isQuestionVisible and
+// validateResponsePayload.
 function validateQuestionLogic(questions) {
   const errors = [];
   if (!Array.isArray(questions)) return errors;
@@ -405,16 +406,181 @@ function normalizeQuestions(input) {
   return normalized;
 }
 
+function isNonEmptyAnswer(answer) {
+  if (answer == null) return false;
+  if (typeof answer === "string") return answer.trim().length > 0;
+  if (typeof answer === "number" && Number.isFinite(answer)) return true;
+  if (typeof answer === "boolean") return true;
+  if (Array.isArray(answer)) return answer.length > 0;
+  return false;
+}
+
+// Shared by the public form client and the submit validator. Cascading: if the
+// referenced question is itself not visible, this question is not visible.
+function isQuestionVisible(question, answers, questions, memo) {
+  if (!question || typeof question !== "object") return false;
+  const qid =
+    typeof question.id === "string" && question.id.trim()
+      ? question.id.trim()
+      : "";
+  if (!qid) return false;
+
+  const cache = memo instanceof Map ? memo : new Map();
+  if (cache.has(qid)) return cache.get(qid);
+
+  const raw = question.display_if;
+  if (raw == null) {
+    cache.set(qid, true);
+    return true;
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    cache.set(qid, false);
+    return false;
+  }
+
+  const refId =
+    typeof raw.question_id === "string" ? raw.question_id.trim() : "";
+  const operator =
+    typeof raw.operator === "string" ? raw.operator.trim() : "";
+  if (!refId || !DISPLAY_IF_OPS.has(operator)) {
+    cache.set(qid, false);
+    return false;
+  }
+
+  const list = Array.isArray(questions) ? questions : [];
+  const ref = list.find(
+    (q) => typeof q?.id === "string" && q.id.trim() === refId
+  );
+  if (!ref) {
+    cache.set(qid, false);
+    return false;
+  }
+
+  if (!isQuestionVisible(ref, answers, list, cache)) {
+    cache.set(qid, false);
+    return false;
+  }
+
+  const answer = answers && typeof answers === "object" ? answers[refId] : undefined;
+  const answered = isNonEmptyAnswer(answer);
+  const value =
+    typeof raw.value === "string" ? raw.value.trim() : "";
+
+  let visible = false;
+  if (operator === "equals") {
+    visible =
+      answered && typeof answer === "string" && answer.trim() === value;
+  } else if (operator === "not_equals") {
+    visible =
+      answered && typeof answer === "string" && answer.trim() !== value;
+  } else if (operator === "answered") {
+    visible = answered;
+  } else if (operator === "not_answered") {
+    visible = !answered;
+  }
+
+  cache.set(qid, visible);
+  return visible;
+}
+
+function validateResponsePayload(questions, answers) {
+  const errors = [];
+  const list = Array.isArray(questions) ? questions : [];
+  const ans =
+    answers && typeof answers === "object" && !Array.isArray(answers)
+      ? answers
+      : {};
+
+  const knownIds = new Set(
+    list
+      .map((q) => (typeof q?.id === "string" ? q.id.trim() : ""))
+      .filter(Boolean)
+  );
+
+  for (const key of Object.keys(ans)) {
+    if (!knownIds.has(key)) {
+      errors.push({
+        question_id: key,
+        error: `Unknown question id "${key}".`,
+      });
+    }
+  }
+
+  const memo = new Map();
+
+  for (const q of list) {
+    const qid = typeof q?.id === "string" ? q.id.trim() : "";
+    if (!qid) continue;
+
+    const visible = isQuestionVisible(q, ans, list, memo);
+    if (!visible) continue;
+
+    const rawAnswer = Object.prototype.hasOwnProperty.call(ans, qid)
+      ? ans[qid]
+      : undefined;
+    const answered = isNonEmptyAnswer(rawAnswer);
+
+    if (q.required && !answered) {
+      errors.push({
+        question_id: qid,
+        error: "This question is required.",
+      });
+      continue;
+    }
+
+    if (!answered) continue;
+
+    if (q.type === "multiple_choice") {
+      const value =
+        typeof rawAnswer === "string" ? rawAnswer.trim() : "";
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const ids = opts
+        .map((o) => (typeof o?.id === "string" ? o.id.trim() : ""))
+        .filter(Boolean);
+      if (!value || !ids.includes(value)) {
+        errors.push({
+          question_id: qid,
+          error: "Answer must be an option id on this question.",
+        });
+      }
+    }
+  }
+
+  return errors;
+}
+
+function filterVisibleAnswers(questions, answers) {
+  const list = Array.isArray(questions) ? questions : [];
+  const ans =
+    answers && typeof answers === "object" && !Array.isArray(answers)
+      ? answers
+      : {};
+  const memo = new Map();
+  const out = {};
+  for (const q of list) {
+    const qid = typeof q?.id === "string" ? q.id.trim() : "";
+    if (!qid) continue;
+    if (!Object.prototype.hasOwnProperty.call(ans, qid)) continue;
+    if (!isQuestionVisible(q, ans, list, memo)) continue;
+    out[qid] = ans[qid];
+  }
+  return out;
+}
+
 module.exports = {
   ALLOWED_Q_TYPES,
   DISPLAY_IF_OPS,
   derivedOptionId,
+  filterVisibleAnswers,
   hasNonEmptyEn,
   isBlankQuestionText,
+  isNonEmptyAnswer,
+  isQuestionVisible,
   isUsableOption,
   normalizeDisplayIf,
   normalizeLocalizedMap,
   normalizeQuestions,
   resolveDisplayIfValue,
   validateQuestionLogic,
+  validateResponsePayload,
 };

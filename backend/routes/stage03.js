@@ -17,6 +17,7 @@ const {
   normalizeQuestions,
   validateQuestionLogic,
 } = require("../lib/questionLogic");
+const { generatePublicToken } = require("../lib/publicToken");
 
 const router = express.Router();
 const requireStarterTier = requireTier("starter", "growth", "enterprise");
@@ -1107,12 +1108,23 @@ router.post("/launch-tool", requireStarterTier, async (req, res) => {
     }
 
     const launchedAt = new Date().toISOString();
+    // Generate public_token once at first launch and keep it on re-launch so
+    // existing community links stay valid. Rotation is a separate deliberate action.
+    const updates = { launched_at: launchedAt };
+    if (
+      typeof row.public_token !== "string" ||
+      !row.public_token.trim()
+    ) {
+      updates.public_token = generatePublicToken();
+    }
 
-    const { error: upErr } = await supabase
+    const { data: updated, error: upErr } = await supabase
       .from("collection_tools")
-      .update({ launched_at: launchedAt })
+      .update(updates)
       .eq("id", toolId)
-      .eq("org_id", orgId);
+      .eq("org_id", orgId)
+      .select("id, public_token, launched_at")
+      .single();
 
     if (upErr) {
       return res.status(400).json({ error: upErr.message });
@@ -1142,7 +1154,105 @@ router.post("/launch-tool", requireStarterTier, async (req, res) => {
       return res.status(400).json({ error: stage04Err.message });
     }
 
+    return res.status(200).json({
+      success: true,
+      public_token: updated?.public_token || updates.public_token || null,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+// Take a live form down without rotating the token. Clearing launched_at makes
+// the public loader 404. The same token can be re-enabled by launching again.
+router.post("/unlaunch-tool", requireStarterTier, async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const toolId = resolveToolId(req.body || {});
+    if (!toolId) {
+      return res.status(400).json({ error: "tool_id is required." });
+    }
+
+    const { data: row, error: findErr } = await supabase
+      .from("collection_tools")
+      .select("id, org_id, launched_at")
+      .eq("id", toolId)
+      .maybeSingle();
+
+    if (findErr || !row || row.org_id !== orgId) {
+      return res.status(400).json({ error: "Collection tool not found." });
+    }
+
+    const { error: upErr } = await supabase
+      .from("collection_tools")
+      .update({ launched_at: null })
+      .eq("id", toolId)
+      .eq("org_id", orgId);
+
+    if (upErr) {
+      return res.status(400).json({ error: upErr.message });
+    }
+
     return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: err.message || "Server error." });
+  }
+});
+
+// Invalidate outstanding public links by issuing a new token. Deliberate:
+// does not clear launched_at. The form stays live only at the new token URL.
+router.post("/rotate-public-token", requireStarterTier, async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req, res);
+    if (!user) return;
+
+    const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+    if (orgError) {
+      return res.status(400).json({ error: orgError });
+    }
+
+    const toolId = resolveToolId(req.body || {});
+    if (!toolId) {
+      return res.status(400).json({ error: "tool_id is required." });
+    }
+
+    const { data: row, error: findErr } = await supabase
+      .from("collection_tools")
+      .select("id, org_id")
+      .eq("id", toolId)
+      .maybeSingle();
+
+    if (findErr || !row || row.org_id !== orgId) {
+      return res.status(400).json({ error: "Collection tool not found." });
+    }
+
+    const public_token = generatePublicToken();
+    const { data: updated, error: upErr } = await supabase
+      .from("collection_tools")
+      .update({ public_token })
+      .eq("id", toolId)
+      .eq("org_id", orgId)
+      .select("id, public_token, launched_at")
+      .single();
+
+    if (upErr) {
+      return res.status(400).json({ error: upErr.message });
+    }
+
+    return res.status(200).json({
+      success: true,
+      public_token: updated.public_token,
+      launched: Boolean(updated.launched_at),
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: err.message || "Server error." });
