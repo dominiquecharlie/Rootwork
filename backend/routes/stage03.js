@@ -12,6 +12,7 @@ const {
   agent09b_questionSuggestions,
 } = require("../agents/agent09b_questionSuggestions");
 const {
+  filterVisibleAnswers,
   isBlankQuestionText,
   isUsableOption,
   normalizeConsentLanguage,
@@ -19,6 +20,7 @@ const {
   parseStoredConsentLanguage,
   serializeConsentLanguage,
   validateQuestionLogic,
+  validateResponsePayload,
 } = require("../lib/questionLogic");
 const { generatePublicToken } = require("../lib/publicToken");
 const {
@@ -34,6 +36,18 @@ const {
   shapeResponseCsv,
 } = require("../lib/artifacts/responseCsv");
 const { orgDeletionAudit } = require("../lib/responseDeletion");
+const {
+  ENTRY_NOT_FOUND,
+  buildStaffEntryInsert,
+  isStaffEntryEligible,
+  readHasIndividualSubject,
+} = require("../lib/staffEntry");
+const {
+  formatRemovalCodeForDisplay,
+  generateRemovalCode,
+  hashRemovalCode,
+} = require("../lib/removalCode");
+const { publicLanguages } = require("../lib/publicFormLanguages");
 const {
   governanceChecksComplete,
   incompleteGovernanceItems,
@@ -194,7 +208,8 @@ function buildConfiguration(
   questions,
   status,
   governance_checks,
-  launch_checklist
+  launch_checklist,
+  has_individual_subject
 ) {
   return {
     who_completes,
@@ -202,6 +217,7 @@ function buildConfiguration(
     status: status || "draft",
     governance_checks: normalizeGovernanceChecksInput(governance_checks),
     launch_checklist: normalizeLaunchChecklistInput(launch_checklist),
+    has_individual_subject: Boolean(has_individual_subject),
   };
 }
 
@@ -951,6 +967,10 @@ router.post("/save-tool", requireStarterTier, async (req, res) => {
     const consent_language = serializeConsentLanguage(consentMap);
     const governance_checks = b.governance_checks;
     const launch_checklist = b.launch_checklist;
+    const has_individual_subject =
+      typeof b.has_individual_subject === "boolean"
+        ? b.has_individual_subject
+        : false;
 
     if (!tool_name) {
       return res.status(400).json({ error: "tool_name is required." });
@@ -1015,7 +1035,8 @@ router.post("/save-tool", requireStarterTier, async (req, res) => {
       questions,
       "draft",
       governance_checks,
-      launch_checklist
+      launch_checklist,
+      has_individual_subject
     );
 
     const toolId = resolveToolId(b);
@@ -1651,7 +1672,9 @@ router.get(
 
       const { data: responses, error: respErr } = await supabase
         .from("collection_responses")
-        .select("submitted_at, language, response_payload")
+        .select(
+          "submitted_at, language, response_payload, entry_method, entered_by"
+        )
         .eq("org_id", orgId)
         .eq("collection_tool_id", toolId)
         .order("submitted_at", { ascending: true });
@@ -1713,7 +1736,7 @@ router.get(
 
       const { data: responses, error: respErr } = await supabase
         .from("collection_responses")
-        .select("id, submitted_at, language")
+        .select("id, submitted_at, language, entry_method, entered_by")
         .eq("org_id", orgId)
         .eq("collection_tool_id", toolId)
         .order("submitted_at", { ascending: false });
@@ -1807,6 +1830,208 @@ router.post(
       }
 
       return res.status(200).json({ success: true });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message || "Server error." });
+    }
+  }
+);
+
+// Staff entry form. Only launched tools with who_completes allowing staff.
+// program_participants-only and drafts 404 with the same shape as missing.
+router.get(
+  "/tools/:toolId/entry",
+  requireStarterTier,
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req, res);
+      if (!user) return;
+
+      const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+      if (orgError) {
+        return res.status(400).json({ error: orgError });
+      }
+
+      const toolId =
+        typeof req.params.toolId === "string" ? req.params.toolId.trim() : "";
+      if (!toolId) {
+        return res.status(404).json(ENTRY_NOT_FOUND);
+      }
+
+      const { data: tool, error: findErr } = await supabase
+        .from("collection_tools")
+        .select(
+          "id, org_id, tool_name, tool_type, consent_language, configuration, launched_at, public_token"
+        )
+        .eq("id", toolId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+
+      if (findErr || !tool || !isStaffEntryEligible(tool)) {
+        return res.status(404).json(ENTRY_NOT_FOUND);
+      }
+
+      const cfg =
+        tool.configuration && typeof tool.configuration === "object"
+          ? tool.configuration
+          : {};
+      const questions = normalizeQuestions(
+        Array.isArray(cfg.questions) ? cfg.questions : []
+      );
+
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("languages_served")
+        .eq("id", orgId)
+        .maybeSingle();
+
+      const consent_language = parseStoredConsentLanguage(tool.consent_language);
+      const languages = publicLanguages(org || {}, questions);
+
+      return res.status(200).json({
+        tool_id: tool.id,
+        tool_name:
+          typeof tool.tool_name === "string" ? tool.tool_name.trim() : "",
+        tool_type:
+          typeof tool.tool_type === "string" ? tool.tool_type.trim() : "",
+        questions,
+        consent_language: consent_language || { en: "" },
+        languages,
+        has_individual_subject: readHasIndividualSubject(cfg, tool.tool_type),
+        public_token:
+          typeof tool.public_token === "string" && tool.public_token.trim()
+            ? tool.public_token.trim()
+            : null,
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message || "Server error." });
+    }
+  }
+);
+
+router.post(
+  "/tools/:toolId/entry",
+  requireStarterTier,
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req, res);
+      if (!user) return;
+
+      const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+      if (orgError) {
+        return res.status(400).json({ error: orgError });
+      }
+
+      const toolId =
+        typeof req.params.toolId === "string" ? req.params.toolId.trim() : "";
+      if (!toolId) {
+        return res.status(404).json(ENTRY_NOT_FOUND);
+      }
+
+      const { data: tool, error: findErr } = await supabase
+        .from("collection_tools")
+        .select(
+          "id, org_id, tool_name, tool_type, consent_language, configuration, launched_at, public_token"
+        )
+        .eq("id", toolId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+
+      if (findErr || !tool || !isStaffEntryEligible(tool)) {
+        return res.status(404).json(ENTRY_NOT_FOUND);
+      }
+
+      const cfg =
+        tool.configuration && typeof tool.configuration === "object"
+          ? tool.configuration
+          : {};
+      const questions = normalizeQuestions(
+        Array.isArray(cfg.questions) ? cfg.questions : []
+      );
+      const hasIndividualSubject = readHasIndividualSubject(
+        cfg,
+        tool.tool_type
+      );
+
+      const body = req.body && typeof req.body === "object" ? req.body : {};
+      if (body.consent_acknowledged !== true) {
+        return res.status(400).json({
+          error: "Consent confirmation is required before saving this entry.",
+        });
+      }
+
+      const language =
+        typeof body.language === "string" && body.language.trim()
+          ? body.language.trim().toLowerCase()
+          : "en";
+      const answers =
+        body.answers && typeof body.answers === "object" && !Array.isArray(body.answers)
+          ? body.answers
+          : {};
+
+      const errors = validateResponsePayload(questions, answers);
+      if (errors.length > 0) {
+        return res.status(400).json({
+          error: "Response is invalid.",
+          errors,
+        });
+      }
+
+      const visibleAnswers = filterVisibleAnswers(questions, answers);
+      const consentAt = new Date().toISOString();
+
+      let removalPlain = null;
+      let removal_code_hash = null;
+      if (hasIndividualSubject) {
+        removalPlain = generateRemovalCode();
+        removal_code_hash = hashRemovalCode(removalPlain);
+      }
+
+      let insertRow;
+      try {
+        insertRow = buildStaffEntryInsert({
+          orgId: tool.org_id,
+          toolId: tool.id,
+          userId: user.id,
+          language,
+          visibleAnswers,
+          consentAt,
+          hasIndividualSubject,
+          removalCodeHash: removal_code_hash,
+        });
+      } catch (buildErr) {
+        console.error(buildErr);
+        return res.status(500).json({ error: "Could not save entry." });
+      }
+
+      const { error: insertErr } = await supabase
+        .from("collection_responses")
+        .insert(insertRow);
+
+      if (insertErr) {
+        console.error(insertErr);
+        return res.status(500).json({ error: "Could not save entry." });
+      }
+
+      const out = { success: true };
+      if (hasIndividualSubject && removalPlain) {
+        out.removal_code = formatRemovalCodeForDisplay(removalPlain);
+        const token =
+          typeof tool.public_token === "string" && tool.public_token.trim()
+            ? tool.public_token.trim()
+            : "";
+        const origin =
+          typeof process.env.PUBLIC_APP_ORIGIN === "string"
+            ? process.env.PUBLIC_APP_ORIGIN.trim().replace(/\/$/, "")
+            : "";
+        if (token && origin) {
+          out.removal_url = `${origin}/f/${encodeURIComponent(token)}/remove`;
+        } else if (token) {
+          out.removal_url = `/f/${encodeURIComponent(token)}/remove`;
+        }
+      }
+      return res.status(201).json(out);
     } catch (err) {
       console.error(err);
       return res.status(500).json({ error: err.message || "Server error." });

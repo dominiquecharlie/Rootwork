@@ -229,6 +229,8 @@ test("CSV distinguishes hidden empty cells from unanswered marker", () => {
   assert.deepStrictEqual(shaped.headers, [
     "submitted_at",
     "language",
+    "entry_method",
+    "entered_by",
     "Attend?",
     "Why not?",
   ]);
@@ -236,6 +238,8 @@ test("CSV distinguishes hidden empty cells from unanswered marker", () => {
   assert.deepStrictEqual(shaped.rows[0], [
     "2026-01-01T00:00:00.000Z",
     "en",
+    "public",
+    "",
     "Yes",
     "",
   ]);
@@ -243,14 +247,63 @@ test("CSV distinguishes hidden empty cells from unanswered marker", () => {
   assert.deepStrictEqual(shaped.rows[1], [
     "2026-01-02T00:00:00.000Z",
     "en",
+    "public",
+    "",
     "No",
     UNANSWERED_MARKER,
   ]);
   const rendered = require("../lib/artifacts/responseCsv").renderResponseCsv(
     shaped
   );
-  assert.ok(rendered.startsWith("submitted_at,language,"), "header must be line 1");
+  assert.ok(
+    rendered.startsWith("submitted_at,language,entry_method,entered_by,"),
+    "header must be line 1"
+  );
   assert.ok(!/^NOTE:/m.test(rendered), "no prose preamble in the data file");
+});
+
+test("CSV distinguishes public vs staff entry_method and entered_by", () => {
+  const questions = [
+    {
+      id: "a",
+      text: { en: "Note" },
+      type: "short_text",
+      required: true,
+    },
+  ];
+  const shaped = shapeResponseCsv({
+    questions,
+    responses: [
+      {
+        submitted_at: "2026-01-01T00:00:00.000Z",
+        language: "en",
+        entry_method: "public",
+        entered_by: null,
+        response_payload: { a: "from resident" },
+      },
+      {
+        submitted_at: "2026-01-02T00:00:00.000Z",
+        language: "es",
+        entry_method: "staff",
+        entered_by: "user-staff-9",
+        response_payload: { a: "from staff" },
+      },
+    ],
+  });
+  assert.deepStrictEqual(shaped.rows[0], [
+    "2026-01-01T00:00:00.000Z",
+    "en",
+    "public",
+    "",
+    "from resident",
+  ]);
+  assert.deepStrictEqual(shaped.rows[1], [
+    "2026-01-02T00:00:00.000Z",
+    "es",
+    "staff",
+    "user-staff-9",
+    "from staff",
+  ]);
 });
 
 const {

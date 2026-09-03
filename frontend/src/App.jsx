@@ -25,6 +25,7 @@ import Collect from "./pages/stage03/Collect";
 import Gaps from "./pages/stage03/Gaps";
 import Tools from "./pages/stage03/Tools";
 import Builder from "./pages/stage03/Builder";
+import StaffEntry from "./pages/stage03/StaffEntry";
 import PublicForm from "./pages/public/PublicForm";
 import PublicFormRemove from "./pages/public/PublicFormRemove";
 
@@ -224,6 +225,14 @@ function App() {
         element={
           <ProtectedRoute>
             <Builder />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/stage03/tools/:toolId/entry"
+        element={
+          <ProtectedRoute>
+            <StaffEntry />
           </ProtectedRoute>
         }
       />

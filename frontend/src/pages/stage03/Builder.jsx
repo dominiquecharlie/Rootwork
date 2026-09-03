@@ -536,6 +536,11 @@ function isGovernanceChecksComplete(checks) {
   );
 }
 
+function defaultHasIndividualSubject(toolType) {
+  const t = (toolType || "").toLowerCase().trim();
+  return t === "interview" || t === "survey";
+}
+
 function getBuilderInstrumentLabel(toolType, surveyPurpose) {
   const tt = (toolType || "").toLowerCase().trim();
   const sp = (surveyPurpose || "").toLowerCase().trim();
@@ -638,6 +643,10 @@ function Builder() {
   const [toolName, setToolName] = useState(initialFromUrl.tool_name);
   const [toolType, setToolType] = useState(initialFromUrl.tool_type);
   const [whoCompletes, setWhoCompletes] = useState("program_participants");
+  const [hasIndividualSubject, setHasIndividualSubject] = useState(() =>
+    defaultHasIndividualSubject(initialFromUrl.tool_type)
+  );
+  const [subjectFlagDirty, setSubjectFlagDirty] = useState(false);
   const [questions, setQuestions] = useState([]);
   const [collectionToolId, setCollectionToolId] = useState(null);
 
@@ -708,6 +717,10 @@ function Builder() {
       setChecklistErrors({});
       setGovernanceChecks(emptyGovernanceChecks());
       setGovernanceErrors({});
+      setHasIndividualSubject(
+        defaultHasIndividualSubject(initialFromUrl.tool_type)
+      );
+      setSubjectFlagDirty(false);
     }
   }, [
     searchParams.toString(),
@@ -812,6 +825,13 @@ function Builder() {
           WHO_OPTIONS.some((o) => o.value === cfg.who_completes)
         ) {
           setWhoCompletes(cfg.who_completes);
+        }
+        if (typeof cfg.has_individual_subject === "boolean") {
+          setHasIndividualSubject(cfg.has_individual_subject);
+          setSubjectFlagDirty(true);
+        } else {
+          setHasIndividualSubject(defaultHasIndividualSubject(tool_type));
+          setSubjectFlagDirty(false);
         }
         setQuestions(mapped);
         setConsentByLang(() => {
@@ -1266,6 +1286,7 @@ function Builder() {
       tool_name: toolName.trim(),
       tool_type: toolType,
       who_completes: whoCompletes,
+      has_individual_subject: Boolean(hasIndividualSubject),
       questions: questions.map((q) => {
         const row = {
           id: q.id,
@@ -1349,6 +1370,7 @@ function Builder() {
     toolName,
     toolType,
     whoCompletes,
+    hasIndividualSubject,
     questions,
     consentByLang,
     toolLanguages,
@@ -2055,6 +2077,43 @@ function Builder() {
                 </option>
               ))}
             </select>
+          </label>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "10px",
+              marginTop: "16px",
+              fontFamily: dmSans,
+              fontSize: "0.92rem",
+              color: bodyDark,
+              lineHeight: 1.45,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={hasIndividualSubject}
+              onChange={(e) => {
+                setHasIndividualSubject(e.target.checked);
+                setSubjectFlagDirty(true);
+              }}
+              style={{ marginTop: "4px" }}
+            />
+            <span>
+              Do these responses record what one specific person said?
+              <span
+                style={{
+                  display: "block",
+                  marginTop: "4px",
+                  color: muted,
+                  fontSize: "0.85rem",
+                }}
+              >
+                If yes, that person gets a removal code so they can withdraw
+                their answers later. Turn this off for group observations or
+                counts where there is no individual to give a code to.
+              </span>
+            </span>
           </label>
         </section>
 
@@ -3655,6 +3714,16 @@ function Builder() {
                     typeof row.language === "string" && row.language.trim()
                       ? row.language.trim()
                       : "unknown";
+                  const method =
+                    typeof row.entry_method === "string" && row.entry_method.trim()
+                      ? row.entry_method.trim()
+                      : "public";
+                  const enteredBy =
+                    method === "staff" &&
+                    typeof row.entered_by === "string" &&
+                    row.entered_by.trim()
+                      ? row.entered_by.trim()
+                      : "";
                   return (
                     <li
                       key={row.id}
@@ -3672,6 +3741,11 @@ function Builder() {
                         <div style={{ fontWeight: 600 }}>{submittedLabel}</div>
                         <div style={{ color: muted, fontSize: "0.9rem" }}>
                           Language: {langLabel}
+                        </div>
+                        <div style={{ color: muted, fontSize: "0.9rem" }}>
+                          {method === "staff"
+                            ? `Entered by staff${enteredBy ? ` (${enteredBy.slice(0, 8)}…)` : ""}`
+                            : "Submitted by respondent"}
                         </div>
                       </div>
                       <button

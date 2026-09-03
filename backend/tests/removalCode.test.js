@@ -149,6 +149,8 @@ test("deleted response no longer appears in CSV export shaping", () => {
   assert.deepStrictEqual(afterDelete.rows[0], [
     "2026-01-01T00:00:00.000Z",
     "en",
+    "public",
+    "",
     "yes",
   ]);
   const csv = renderResponseCsv(afterDelete);

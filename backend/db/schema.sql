@@ -844,8 +844,8 @@ alter table public.collection_responses
 -- not a direct client delete.
 --
 -- Consequence: the backend (service role) is the only writer to this table.
--- When staff-entry tools get built for who_completes = staff_members, that
--- path must also go through the backend, not the anon client.
+-- Staff entry (who_completes = staff_members / both / other) goes through the
+-- Stage 03 entry routes, not the anon client.
 drop policy if exists "collection_responses_write" on public.collection_responses;
 drop policy if exists "collection_responses_insert" on public.collection_responses;
 drop policy if exists "collection_responses_update" on public.collection_responses;
@@ -888,13 +888,18 @@ create table if not exists public.response_deletions (
   method text not null check (method in ('self', 'org')),
   deleted_by uuid null references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
-  constraint response_deletions_org_requires_actor check (
-    method <> 'org' or deleted_by is not null
-  ),
+  -- Do not CHECK (method = 'org' => deleted_by is not null).
+  -- deleted_by is ON DELETE SET NULL; that CHECK would block deleting a user
+  -- who ever performed an org-assisted removal. Enforce at insert in the route.
   constraint response_deletions_self_has_no_actor check (
     method <> 'self' or deleted_by is null
   )
 );
+
+-- Live databases created with the old org actor CHECK: drop it so user
+-- deletion (ON DELETE SET NULL) can succeed.
+alter table public.response_deletions
+  drop constraint if exists response_deletions_org_requires_actor;
 
 alter table public.response_deletions enable row level security;
 
@@ -921,3 +926,37 @@ create policy "response_deletions_delete_server_only"
 
 create index if not exists response_deletions_org_tool_idx
   on public.response_deletions (org_id, collection_tool_id, deleted_at desc);
+
+-- Staff entry path: who entered a response, and how it arrived.
+-- entry_method is explicit. Do not infer staff vs public from entered_by
+-- being null (a deleted user would mislabel a public response).
+alter table public.collection_responses
+  add column if not exists entered_by uuid null references auth.users(id) on delete set null;
+
+alter table public.collection_responses
+  add column if not exists entry_method text not null default 'public';
+
+alter table public.collection_responses
+  drop constraint if exists collection_responses_entry_method_check;
+
+alter table public.collection_responses
+  add constraint collection_responses_entry_method_check
+  check (entry_method in ('public', 'staff'));
+
+-- Do NOT add check (entry_method = 'staff' => entered_by is not null).
+-- entered_by is ON DELETE SET NULL; that CHECK would block deleting a user
+-- who ever staff-entered a response. Enforce "names an actor" at insert in
+-- the route instead.
+alter table public.collection_responses
+  drop constraint if exists collection_responses_staff_requires_actor;
+
+-- Public rows must never claim an actor.
+alter table public.collection_responses
+  drop constraint if exists collection_responses_public_has_no_actor;
+
+alter table public.collection_responses
+  add constraint collection_responses_public_has_no_actor
+  check (entry_method <> 'public' or entered_by is null);
+
+create index if not exists collection_responses_tool_entry_method_idx
+  on public.collection_responses (collection_tool_id, entry_method, submitted_at desc);

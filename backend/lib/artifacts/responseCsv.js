@@ -45,6 +45,8 @@ function shapeResponseCsv({ questions, responses }) {
   const headers = [
     "submitted_at",
     "language",
+    "entry_method",
+    "entered_by",
     ...list.map((q) => {
       const en = pickLocalized(q.text, "en").text;
       return en || q.id;
@@ -58,9 +60,21 @@ function shapeResponseCsv({ questions, responses }) {
         ? row.response_payload
         : {};
     const memo = new Map();
+    const method =
+      typeof row.entry_method === "string" && row.entry_method.trim()
+        ? row.entry_method.trim()
+        : "public";
+    const enteredBy =
+      method === "staff" &&
+      typeof row.entered_by === "string" &&
+      row.entered_by.trim()
+        ? row.entered_by.trim()
+        : "";
     const cells = [
       typeof row.submitted_at === "string" ? row.submitted_at : "",
       typeof row.language === "string" ? row.language : "",
+      method,
+      enteredBy,
     ];
     for (const q of list) {
       const visible = isQuestionVisible(q, answers, list, memo);

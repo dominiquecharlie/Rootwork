@@ -64,6 +64,21 @@ function toolTypeBadgeStyle(type) {
   return { backgroundColor: "#F3F4F6", color: "#6B7280" };
 }
 
+const STAFF_ENTRY_WHO = new Set(["staff_members", "both", "other"]);
+
+function toolAllowsStaffEntry(tool) {
+  if (!tool || !tool.launched_at) return false;
+  const cfg =
+    tool.configuration && typeof tool.configuration === "object"
+      ? tool.configuration
+      : {};
+  const who =
+    typeof cfg.who_completes === "string"
+      ? cfg.who_completes.trim().toLowerCase()
+      : "";
+  return STAFF_ENTRY_WHO.has(who);
+}
+
 function Tools() {
   const navigate = useNavigate();
   const [tools, setTools] = useState([]);
@@ -307,33 +322,65 @@ function Tools() {
                     </span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const params = new URLSearchParams();
-                    params.set("tool_id", tool.id);
-                    params.set(
-                      "tool_name",
-                      (tool.tool_name || "Collection tool").trim() ||
-                        "Collection tool"
-                    );
-                    params.set("tool_type", tType);
-                    navigate(`/stage03/builder?${params.toString()}`);
-                  }}
+                <div
                   style={{
-                    cursor: "pointer",
-                    padding: "10px 18px",
-                    borderRadius: "8px",
-                    border: `2px solid ${green}`,
-                    backgroundColor: "transparent",
-                    color: green,
-                    fontFamily: dmSans,
-                    fontWeight: 600,
-                    fontSize: "0.9rem",
+                    display: "flex",
+                    flexWrap: "wrap",
+                    gap: "10px",
+                    alignItems: "center",
                   }}
                 >
-                  Edit
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const params = new URLSearchParams();
+                      params.set("tool_id", tool.id);
+                      params.set(
+                        "tool_name",
+                        (tool.tool_name || "Collection tool").trim() ||
+                          "Collection tool"
+                      );
+                      params.set("tool_type", tType);
+                      navigate(`/stage03/builder?${params.toString()}`);
+                    }}
+                    style={{
+                      cursor: "pointer",
+                      padding: "10px 18px",
+                      borderRadius: "8px",
+                      border: `2px solid ${green}`,
+                      backgroundColor: "transparent",
+                      color: green,
+                      fontFamily: dmSans,
+                      fontWeight: 600,
+                      fontSize: "0.9rem",
+                    }}
+                  >
+                    Edit
+                  </button>
+                  {toolAllowsStaffEntry(tool) ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        navigate(
+                          `/stage03/tools/${encodeURIComponent(tool.id)}/entry`
+                        )
+                      }
+                      style={{
+                        cursor: "pointer",
+                        padding: "10px 18px",
+                        borderRadius: "8px",
+                        border: "none",
+                        backgroundColor: green,
+                        color: "#FFFFFF",
+                        fontFamily: dmSans,
+                        fontWeight: 600,
+                        fontSize: "0.9rem",
+                      }}
+                    >
+                      Enter responses
+                    </button>
+                  ) : null}
+                </div>
               </article>
             );
           })}

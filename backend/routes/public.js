@@ -253,6 +253,8 @@ router.post("/form/:token/respond", publicFormRespondLimiter, async (req, res) =
         language,
         submitted_at: consentAt,
         removal_code_hash,
+        entry_method: "public",
+        entered_by: null,
       });
 
     if (insertErr) {
