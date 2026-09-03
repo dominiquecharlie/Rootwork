@@ -404,6 +404,71 @@ const labelStyle = {
 
 const mintBorder = "#A8D4AA";
 
+const LAUNCH_CHECKLIST_ITEMS = [
+  {
+    key: "pilot_confirmed",
+    confirmLabel: "Pilot confirmed",
+    detailLabel: "Who did you pilot this with?",
+    detailPlaceholder: "Name the people or group who tried this before launch.",
+  },
+  {
+    key: "staff_trained",
+    confirmLabel: "Staff trained",
+    detailLabel: "Who will administer this, and how were they prepared?",
+    detailPlaceholder: "Name who will run it and how they were prepared.",
+  },
+  {
+    key: "community_informed",
+    confirmLabel: "Community informed",
+    detailLabel:
+      "How did you tell the community what you are collecting and why?",
+    detailPlaceholder: "Describe how you informed the community.",
+  },
+];
+
+function emptyLaunchChecklist() {
+  return {
+    pilot_confirmed: { confirmed: false, detail: "" },
+    staff_trained: { confirmed: false, detail: "" },
+    community_informed: { confirmed: false, detail: "" },
+  };
+}
+
+function readLaunchChecklistFromConfig(cfg) {
+  const raw =
+    cfg &&
+    typeof cfg === "object" &&
+    cfg.launch_checklist &&
+    typeof cfg.launch_checklist === "object" &&
+    !Array.isArray(cfg.launch_checklist)
+      ? cfg.launch_checklist
+      : {};
+  const next = emptyLaunchChecklist();
+  for (const key of Object.keys(next)) {
+    const item =
+      raw[key] && typeof raw[key] === "object" && !Array.isArray(raw[key])
+        ? raw[key]
+        : {};
+    next[key] = {
+      confirmed: Boolean(item.confirmed),
+      detail: typeof item.detail === "string" ? item.detail : "",
+    };
+  }
+  return next;
+}
+
+function isLaunchChecklistItemComplete(item) {
+  if (!item || typeof item !== "object") return false;
+  return Boolean(item.confirmed) && String(item.detail || "").trim().length > 0;
+}
+
+function isLaunchChecklistComplete(checklist) {
+  if (!checklist || typeof checklist !== "object") return false;
+  return LAUNCH_CHECKLIST_ITEMS.every((item) =>
+    isLaunchChecklistItemComplete(checklist[item.key])
+  );
+}
+
 function getBuilderInstrumentLabel(toolType, surveyPurpose) {
   const tt = (toolType || "").toLowerCase().trim();
   const sp = (surveyPurpose || "").toLowerCase().trim();
@@ -547,6 +612,10 @@ function Builder() {
   const [govConsent, setGovConsent] = useState(false);
   const [govShare, setGovShare] = useState(false);
   const [govData, setGovData] = useState(false);
+  const [launchChecklist, setLaunchChecklist] = useState(() =>
+    emptyLaunchChecklist()
+  );
+  const [checklistErrors, setChecklistErrors] = useState({});
 
   const [saveError, setSaveError] = useState("");
   const [launchError, setLaunchError] = useState("");
@@ -567,6 +636,8 @@ function Builder() {
     if (!tid) {
       setQuestions([]);
       setCollectionToolId(null);
+      setLaunchChecklist(emptyLaunchChecklist());
+      setChecklistErrors({});
     }
   }, [
     searchParams.toString(),
@@ -702,6 +773,8 @@ function Builder() {
         setGovConsent(Boolean(gc.consent_reviewed));
         setGovShare(Boolean(gc.shareback_plan));
         setGovData(Boolean(gc.data_storage));
+        setLaunchChecklist(readLaunchChecklistFromConfig(cfg));
+        setChecklistErrors({});
       } catch {
         /* ignore */
       } finally {
@@ -1161,6 +1234,29 @@ function Builder() {
         shareback_plan: govShare,
         data_storage: govData,
       },
+      launch_checklist: {
+        pilot_confirmed: {
+          confirmed: Boolean(launchChecklist.pilot_confirmed?.confirmed),
+          detail:
+            typeof launchChecklist.pilot_confirmed?.detail === "string"
+              ? launchChecklist.pilot_confirmed.detail
+              : "",
+        },
+        staff_trained: {
+          confirmed: Boolean(launchChecklist.staff_trained?.confirmed),
+          detail:
+            typeof launchChecklist.staff_trained?.detail === "string"
+              ? launchChecklist.staff_trained.detail
+              : "",
+        },
+        community_informed: {
+          confirmed: Boolean(launchChecklist.community_informed?.confirmed),
+          detail:
+            typeof launchChecklist.community_informed?.detail === "string"
+              ? launchChecklist.community_informed.detail
+              : "",
+        },
+      },
     };
   }, [
     collectionToolId,
@@ -1173,6 +1269,7 @@ function Builder() {
     govConsent,
     govShare,
     govData,
+    launchChecklist,
   ]);
 
   async function downloadAuthorizedFile(path) {
@@ -1411,18 +1508,36 @@ function Builder() {
   }
 
   const governanceReady = govConsent && govShare && govData;
+  const checklistReady = isLaunchChecklistComplete(launchChecklist);
   const launchDisabled =
-    !governanceReady || !collectionToolId || launching || saving;
+    !governanceReady ||
+    !checklistReady ||
+    !collectionToolId ||
+    launching ||
+    saving;
 
   async function handleLaunch() {
     setLaunchError("");
     setTierNotice("");
+    setChecklistErrors({});
     if (!collectionToolId) {
       setLaunchError("Save a draft first so this tool has an id.");
       return;
     }
     if (!governanceReady) {
       setLaunchError("Confirm all governance items before launch.");
+      return;
+    }
+    if (!checklistReady) {
+      const map = {};
+      for (const item of LAUNCH_CHECKLIST_ITEMS) {
+        if (!isLaunchChecklistItemComplete(launchChecklist[item.key])) {
+          map[item.key] =
+            "Confirm this item and add a short answer. Whitespace alone is not enough.";
+        }
+      }
+      setChecklistErrors(map);
+      setLaunchError("Complete the launch checklist before launch.");
       return;
     }
     if (!(consentByLang.en || "").trim()) {
@@ -1437,16 +1552,58 @@ function Builder() {
       return;
     }
     try {
+      // Persist checklist (and the rest of the draft) before the launch gate
+      // reads configuration from the database.
+      const saveResponse = await fetch(`${apiBaseUrl}/api/stage03/save-tool`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payloadBody()),
+      });
+      const saveBody = await saveResponse.json().catch(() => ({}));
+      if (!saveResponse.ok) {
+        const parsed = parseStage03GateResponse(saveResponse, saveBody);
+        if (parsed.kind === "tier") {
+          setTierNotice(parsed.message);
+        } else {
+          setLaunchError(parsed.message);
+        }
+        setLaunching(false);
+        return;
+      }
+      if (saveBody?.tool?.id) {
+        setCollectionToolId(saveBody.tool.id);
+      }
+
       const response = await fetch(`${apiBaseUrl}/api/stage03/launch-tool`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ tool_id: collectionToolId }),
+        body: JSON.stringify({
+          tool_id: saveBody?.tool?.id || collectionToolId,
+        }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
+        const errs = Array.isArray(body?.errors) ? body.errors : [];
+        if (errs.length > 0) {
+          const map = {};
+          for (const e of errs) {
+            if (typeof e?.item === "string" && e.item.trim()) {
+              map[e.item.trim()] =
+                typeof e.error === "string" && e.error.trim()
+                  ? e.error.trim()
+                  : "Incomplete.";
+            }
+          }
+          if (Object.keys(map).length > 0) {
+            setChecklistErrors(map);
+          }
+        }
         const parsed = parseStage03GateResponse(response, body);
         if (parsed.kind === "tier") {
           setTierNotice(parsed.message);
@@ -2887,6 +3044,157 @@ function Builder() {
             have a plan for how data will be handled if it is exported or shared
             outside the platform
           </label>
+        </section>
+
+        <section
+          style={{
+            marginBottom: "28px",
+            textAlign: "left",
+            backgroundColor: "#FFFFFF",
+            border: "1px solid #E5E7EB",
+            borderRadius: "12px",
+            padding: "22px",
+          }}
+        >
+          <h2
+            style={{
+              margin: "0 0 8px",
+              color: green,
+              fontFamily: georgia,
+              fontWeight: 700,
+              fontSize: "1.2rem",
+              textAlign: "center",
+            }}
+          >
+            Launch checklist
+          </h2>
+          <p
+            style={{
+              margin: "0 0 18px",
+              color: muted,
+              fontFamily: dmSans,
+              fontSize: "0.88rem",
+              lineHeight: 1.5,
+              textAlign: "center",
+            }}
+          >
+            Each item needs a confirmation and a short answer. A checked box
+            without detail does not count.
+          </p>
+          {LAUNCH_CHECKLIST_ITEMS.map((item) => {
+            const entry = launchChecklist[item.key] || {
+              confirmed: false,
+              detail: "",
+            };
+            const err = checklistErrors[item.key];
+            return (
+              <div
+                key={item.key}
+                style={{
+                  marginBottom: "18px",
+                  paddingBottom: "16px",
+                  borderBottom: "1px solid #E5E7EB",
+                }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "10px",
+                    marginBottom: "10px",
+                    fontFamily: dmSans,
+                    fontSize: "0.92rem",
+                    color: bodyDark,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(entry.confirmed)}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setLaunchChecklist((prev) => ({
+                        ...prev,
+                        [item.key]: {
+                          confirmed: checked,
+                          detail:
+                            typeof prev[item.key]?.detail === "string"
+                              ? prev[item.key].detail
+                              : "",
+                        },
+                      }));
+                      setChecklistErrors((prev) => {
+                        const next = { ...prev };
+                        delete next[item.key];
+                        return next;
+                      });
+                    }}
+                    style={{ marginTop: "4px" }}
+                  />
+                  {item.confirmLabel}
+                </label>
+                <label
+                  htmlFor={`launch-checklist-${item.key}`}
+                  style={{
+                    display: "block",
+                    marginBottom: "6px",
+                    fontFamily: dmSans,
+                    fontSize: "0.88rem",
+                    fontWeight: 600,
+                    color: bodyDark,
+                  }}
+                >
+                  {item.detailLabel}
+                </label>
+                <textarea
+                  id={`launch-checklist-${item.key}`}
+                  value={typeof entry.detail === "string" ? entry.detail : ""}
+                  onChange={(e) => {
+                    const detail = e.target.value;
+                    setLaunchChecklist((prev) => ({
+                      ...prev,
+                      [item.key]: {
+                        confirmed: Boolean(prev[item.key]?.confirmed),
+                        detail,
+                      },
+                    }));
+                    setChecklistErrors((prev) => {
+                      const next = { ...prev };
+                      delete next[item.key];
+                      return next;
+                    });
+                  }}
+                  rows={3}
+                  placeholder={item.detailPlaceholder}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: err ? "1px solid #B91C1C" : `1px solid ${mintBorder}`,
+                    fontFamily: dmSans,
+                    fontSize: "0.92rem",
+                    color: bodyDark,
+                    backgroundColor: "#FAF9F7",
+                    resize: "vertical",
+                  }}
+                />
+                {err ? (
+                  <p
+                    role="alert"
+                    style={{
+                      margin: "6px 0 0",
+                      color: "#B91C1C",
+                      fontFamily: dmSans,
+                      fontSize: "0.85rem",
+                    }}
+                  >
+                    {err}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
         </section>
 
         {!collectionToolId ? (

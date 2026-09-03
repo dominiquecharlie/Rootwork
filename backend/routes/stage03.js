@@ -31,6 +31,11 @@ const {
   shapeResponseCsv,
 } = require("../lib/artifacts/responseCsv");
 const { orgDeletionAudit } = require("../lib/responseDeletion");
+const {
+  incompleteLaunchChecklistItems,
+  launchChecklistComplete,
+  LAUNCH_CHECKLIST_KEYS,
+} = require("../lib/stageGates");
 
 const router = express.Router();
 const requireStarterTier = requireTier("starter", "growth", "enterprise");
@@ -171,7 +176,7 @@ function normalizeWhoCompletes(v) {
 }
 
 function normalizeGovernanceChecksInput(raw) {
-  if (!raw || typeof raw !== "object") {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return {
       consent_reviewed: false,
       shareback_plan: false,
@@ -185,12 +190,36 @@ function normalizeGovernanceChecksInput(raw) {
   };
 }
 
-function buildConfiguration(who_completes, questions, status, governance_checks) {
+function normalizeLaunchChecklistInput(raw) {
+  const src =
+    raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  for (const key of LAUNCH_CHECKLIST_KEYS) {
+    const item =
+      src[key] && typeof src[key] === "object" && !Array.isArray(src[key])
+        ? src[key]
+        : {};
+    out[key] = {
+      confirmed: Boolean(item.confirmed),
+      detail: typeof item.detail === "string" ? item.detail : "",
+    };
+  }
+  return out;
+}
+
+function buildConfiguration(
+  who_completes,
+  questions,
+  status,
+  governance_checks,
+  launch_checklist
+) {
   return {
     who_completes,
     questions,
     status: status || "draft",
     governance_checks: normalizeGovernanceChecksInput(governance_checks),
+    launch_checklist: normalizeLaunchChecklistInput(launch_checklist),
   };
 }
 
@@ -948,6 +977,7 @@ router.post("/save-tool", requireStarterTier, async (req, res) => {
     const consentMap = normalizeConsentLanguage(b.consent_language);
     const consent_language = serializeConsentLanguage(consentMap);
     const governance_checks = b.governance_checks;
+    const launch_checklist = b.launch_checklist;
 
     if (!tool_name) {
       return res.status(400).json({ error: "tool_name is required." });
@@ -1011,7 +1041,8 @@ router.post("/save-tool", requireStarterTier, async (req, res) => {
       who_completes,
       questions,
       "draft",
-      governance_checks
+      governance_checks,
+      launch_checklist
     );
 
     const toolId = resolveToolId(b);
@@ -1115,6 +1146,23 @@ router.post("/launch-tool", requireStarterTier, async (req, res) => {
       return res.status(400).json({
         error:
           "All three governance confirmations must be saved on this tool before launch.",
+      });
+    }
+
+    const incompleteChecklist = incompleteLaunchChecklistItems(
+      cfg.launch_checklist
+    );
+    if (
+      !launchChecklistComplete(cfg.launch_checklist) ||
+      incompleteChecklist.length > 0
+    ) {
+      return res.status(400).json({
+        error: "Launch checklist is incomplete.",
+        errors: incompleteChecklist.map((item) => ({
+          item,
+          error:
+            "Confirm this item and add a short answer. Whitespace alone is not enough.",
+        })),
       });
     }
 
