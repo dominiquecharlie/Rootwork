@@ -252,3 +252,172 @@ test("CSV distinguishes hidden empty cells from unanswered marker", () => {
   assert.ok(rendered.startsWith("submitted_at,language,"), "header must be line 1");
   assert.ok(!/^NOTE:/m.test(rendered), "no prose preamble in the data file");
 });
+
+const {
+  shapeGovernanceDocument,
+} = require("../lib/artifacts/governanceDocument");
+
+test("governance document: ordered blocks with full details and bilingual consent", () => {
+  const { blocks } = shapeGovernanceDocument({
+    orgName: "Keep Austin Healthy",
+    toolName: "Exit survey",
+    generatedAt: "2026-09-02T15:00:00.000Z",
+    questions: [
+      { id: "a", text: { en: "Did you attend?", es: "¿Asistió?" }, type: "short_text" },
+      { id: "b", text: { en: "What changed?" }, type: "long_text" },
+    ],
+    consentLanguage: {
+      en: "We will use your answers to improve the program.",
+      es: "Usaremos sus respuestas para mejorar el programa.",
+    },
+    governanceChecks: {
+      consent_reviewed: {
+        confirmed: true,
+        detail: "Director shortened paragraph three",
+      },
+      shareback_plan: {
+        confirmed: true,
+        detail: "June community dinner poster and verbal update",
+      },
+      data_storage: {
+        confirmed: true,
+        detail: "Two staff accounts can export",
+      },
+    },
+    launchChecklist: {
+      pilot_confirmed: {
+        confirmed: true,
+        detail: "Tuesday dinner table of three residents",
+      },
+      staff_trained: {
+        confirmed: true,
+        detail: "Coordinator ran a 30 minute walkthrough",
+      },
+      community_informed: {
+        confirmed: true,
+        detail: "Flyer at the center and meeting announcement",
+      },
+    },
+    removalUrl: "https://example.org/f/tok123/remove",
+    communityEngagement: {
+      title: "East Austin listening session",
+      priorities_named: "Safer streets and evening programming",
+    },
+  });
+
+  const types = blocks.map((b) => b.type);
+  assert.strictEqual(blocks[0].type, "title");
+  assert.strictEqual(blocks[0].text, "Keep Austin Healthy");
+  assert.ok(blocks.some((b) => b.type === "subtitle"));
+  assert.ok(blocks.some((b) => b.type === "body" && b.text.includes("Exit survey")));
+  assert.ok(blocks.some((b) => b.type === "body" && b.text.includes("2026-09-02")));
+
+  const sectionTexts = blocks
+    .filter((b) => b.type === "section")
+    .map((b) => b.text);
+  assert.deepStrictEqual(sectionTexts, [
+    "What is being collected",
+    "Consent language",
+    "Governance decisions",
+    "Launch readiness",
+    "How residents can withdraw",
+    "Connection to community input",
+  ]);
+
+  assert.ok(
+    blocks.some((b) => b.type === "question" && b.text.startsWith("1. Did you attend?"))
+  );
+  assert.ok(
+    blocks.some((b) => b.type === "question" && b.text.startsWith("2. What changed?"))
+  );
+  assert.ok(!blocks.some((b) => b.type === "answer_line"));
+
+  assert.ok(blocks.some((b) => b.type === "body" && b.text === "English:"));
+  assert.ok(
+    blocks.some(
+      (b) =>
+        b.type === "body" &&
+        b.text.includes("improve the program")
+    )
+  );
+  assert.ok(blocks.some((b) => b.type === "body" && b.text === "Español:"));
+  assert.ok(
+    blocks.some(
+      (b) =>
+        b.type === "body" &&
+        b.text.includes("mejorar el programa")
+    )
+  );
+
+  assert.ok(
+    blocks.some(
+      (b) => b.type === "body" && b.text.includes("Director shortened paragraph three")
+    )
+  );
+  assert.ok(
+    blocks.some(
+      (b) =>
+        b.type === "body" &&
+        b.text.includes("Tuesday dinner table of three residents")
+    )
+  );
+  assert.ok(
+    blocks.some(
+      (b) =>
+        b.type === "body" &&
+        b.text.includes("https://example.org/f/tok123/remove")
+    )
+  );
+  assert.ok(
+    blocks.some(
+      (b) =>
+        b.type === "body" &&
+        /does not expire/i.test(b.text)
+    )
+  );
+  assert.ok(
+    blocks.some(
+      (b) =>
+        b.type === "body" &&
+        /may not be enough to find their response/i.test(b.text)
+    )
+  );
+  assert.ok(
+    blocks.some(
+      (b) =>
+        b.type === "body" &&
+        b.text.includes("Safer streets and evening programming")
+    )
+  );
+  assert.ok(!types.includes("option"));
+  assert.ok(
+    !blocks.some((b) => /Rootwork|Intentional Data/i.test(b.text || ""))
+  );
+});
+
+test("governance document: missing community engagement still has the section", () => {
+  const { blocks } = shapeGovernanceDocument({
+    orgName: "Keep Austin Healthy",
+    toolName: "Exit survey",
+    generatedAt: "2026-09-02T15:00:00.000Z",
+    questions: [{ id: "a", text: { en: "Hello" }, type: "short_text" }],
+    consentLanguage: { en: "Consent text." },
+    governanceChecks: {},
+    launchChecklist: {},
+    removalUrl: "",
+    communityEngagement: null,
+  });
+
+  assert.ok(
+    blocks.some(
+      (b) => b.type === "section" && b.text === "Connection to community input"
+    )
+  );
+  assert.ok(
+    blocks.some(
+      (b) =>
+        b.type === "body" &&
+        /No Stage 02 community engagement record was found/i.test(b.text)
+    )
+  );
+});

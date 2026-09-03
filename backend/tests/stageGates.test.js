@@ -1,14 +1,17 @@
-// Pure predicate tests for Stage 03 community voice, reconciliation, and launch gates.
-// Run: npm test          (from backend/)
+// Pure predicate tests for Stage 03 community voice, reconciliation, launch,
+// and governance gates. Run: npm test (from backend/)
 
 const { test } = require("node:test");
 const assert = require("node:assert");
 
 const {
+  governanceChecksComplete,
   hasCompleteEngagement,
+  incompleteGovernanceItems,
   incompleteLaunchChecklistItems,
   isReconciled,
   launchChecklistComplete,
+  normalizeGovernanceChecks,
 } = require("../lib/stageGates");
 
 const completeRow = {
@@ -29,6 +32,21 @@ const completeChecklist = {
   community_informed: {
     confirmed: true,
     detail: "Posted a flyer at the center and announced it at the meeting",
+  },
+};
+
+const completeGovernance = {
+  consent_reviewed: {
+    confirmed: true,
+    detail: "Program director shortened the third paragraph",
+  },
+  shareback_plan: {
+    confirmed: true,
+    detail: "Poster and verbal update at the June community dinner",
+  },
+  data_storage: {
+    confirmed: true,
+    detail: "Stored in Rootwork; only two staff accounts can export",
   },
 };
 
@@ -154,5 +172,119 @@ test("launch checklist: legacy tool with no launch_checklist fails closed", () =
     "pilot_confirmed",
     "staff_trained",
     "community_informed",
+  ]);
+});
+
+test("launch checklist: malformed inputs fail closed", () => {
+  assert.strictEqual(launchChecklistComplete("nope"), false);
+  assert.strictEqual(launchChecklistComplete(["a"]), false);
+  assert.strictEqual(
+    launchChecklistComplete({
+      ...completeChecklist,
+      pilot_confirmed: true,
+    }),
+    false
+  );
+  assert.strictEqual(
+    launchChecklistComplete({
+      ...completeChecklist,
+      pilot_confirmed: { confirmed: true, detail: 12 },
+    }),
+    false
+  );
+  assert.strictEqual(
+    launchChecklistComplete({
+      ...completeChecklist,
+      pilot_confirmed: ["confirmed"],
+    }),
+    false
+  );
+});
+
+test("governance checks: all three complete -> passes", () => {
+  assert.strictEqual(governanceChecksComplete(completeGovernance), true);
+  assert.deepStrictEqual(incompleteGovernanceItems(completeGovernance), []);
+});
+
+test("governance checks: any one unconfirmed -> fails", () => {
+  for (const key of ["consent_reviewed", "shareback_plan", "data_storage"]) {
+    const broken = {
+      ...completeGovernance,
+      [key]: { ...completeGovernance[key], confirmed: false },
+    };
+    assert.strictEqual(governanceChecksComplete(broken), false);
+    assert.ok(incompleteGovernanceItems(broken).includes(key));
+  }
+});
+
+test("governance checks: confirmed with blank or whitespace detail -> fails", () => {
+  for (const detail of ["", "   ", "\t\n"]) {
+    const broken = {
+      ...completeGovernance,
+      shareback_plan: { confirmed: true, detail },
+    };
+    assert.strictEqual(governanceChecksComplete(broken), false);
+    assert.deepStrictEqual(incompleteGovernanceItems(broken), [
+      "shareback_plan",
+    ]);
+  }
+});
+
+test("governance checks: missing key -> fails", () => {
+  const { data_storage: _drop, ...partial } = completeGovernance;
+  assert.strictEqual(governanceChecksComplete(partial), false);
+  assert.ok(incompleteGovernanceItems(partial).includes("data_storage"));
+});
+
+test("governance checks: legacy bare booleans normalize then fail closed", () => {
+  const legacy = {
+    consent_reviewed: true,
+    shareback_plan: true,
+    data_storage: true,
+  };
+  const normalized = normalizeGovernanceChecks(legacy);
+  assert.deepStrictEqual(normalized.consent_reviewed, {
+    confirmed: true,
+    detail: "",
+  });
+  assert.strictEqual(governanceChecksComplete(normalized), false);
+  assert.deepStrictEqual(incompleteGovernanceItems(normalized), [
+    "consent_reviewed",
+    "shareback_plan",
+    "data_storage",
+  ]);
+});
+
+test("governance checks: null / empty / malformed fail closed", () => {
+  assert.strictEqual(governanceChecksComplete(null), false);
+  assert.strictEqual(governanceChecksComplete(undefined), false);
+  assert.strictEqual(governanceChecksComplete({}), false);
+  assert.strictEqual(governanceChecksComplete("nope"), false);
+  assert.strictEqual(governanceChecksComplete(["a"]), false);
+  assert.strictEqual(
+    governanceChecksComplete({
+      ...completeGovernance,
+      consent_reviewed: true,
+    }),
+    false
+  );
+  assert.strictEqual(
+    governanceChecksComplete({
+      ...completeGovernance,
+      consent_reviewed: { confirmed: true, detail: 99 },
+    }),
+    false
+  );
+  assert.strictEqual(
+    governanceChecksComplete({
+      ...completeGovernance,
+      consent_reviewed: ["yes"],
+    }),
+    false
+  );
+  assert.deepStrictEqual(incompleteGovernanceItems(null), [
+    "consent_reviewed",
+    "shareback_plan",
+    "data_storage",
   ]);
 });

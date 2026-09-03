@@ -26,15 +26,21 @@ const {
   instrumentLanguagesForTool,
 } = require("../lib/artifacts/collectionInstrument");
 const {
+  generateGovernanceDocumentDocx,
+} = require("../lib/artifacts/governanceDocument");
+const {
   renderResponseCsv,
   responseCsvFilename,
   shapeResponseCsv,
 } = require("../lib/artifacts/responseCsv");
 const { orgDeletionAudit } = require("../lib/responseDeletion");
 const {
+  governanceChecksComplete,
+  incompleteGovernanceItems,
   incompleteLaunchChecklistItems,
   launchChecklistComplete,
-  LAUNCH_CHECKLIST_KEYS,
+  normalizeGovernanceChecks,
+  normalizeLaunchChecklist,
 } = require("../lib/stageGates");
 
 const router = express.Router();
@@ -176,35 +182,11 @@ function normalizeWhoCompletes(v) {
 }
 
 function normalizeGovernanceChecksInput(raw) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return {
-      consent_reviewed: false,
-      shareback_plan: false,
-      data_storage: false,
-    };
-  }
-  return {
-    consent_reviewed: Boolean(raw.consent_reviewed),
-    shareback_plan: Boolean(raw.shareback_plan),
-    data_storage: Boolean(raw.data_storage),
-  };
+  return normalizeGovernanceChecks(raw);
 }
 
 function normalizeLaunchChecklistInput(raw) {
-  const src =
-    raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  const out = {};
-  for (const key of LAUNCH_CHECKLIST_KEYS) {
-    const item =
-      src[key] && typeof src[key] === "object" && !Array.isArray(src[key])
-        ? src[key]
-        : {};
-    out[key] = {
-      confirmed: Boolean(item.confirmed),
-      detail: typeof item.detail === "string" ? item.detail : "",
-    };
-  }
-  return out;
+  return normalizeLaunchChecklist(raw);
 }
 
 function buildConfiguration(
@@ -226,15 +208,6 @@ function buildConfiguration(
 function isConfigurationNonEmpty(configuration) {
   if (!configuration || typeof configuration !== "object") return false;
   return Object.keys(configuration).length > 0;
-}
-
-function governanceChecksComplete(configuration) {
-  if (!configuration || typeof configuration !== "object") return false;
-  const gc =
-    configuration.governance_checks || configuration.governance || {};
-  return Boolean(
-    gc.consent_reviewed && gc.shareback_plan && gc.data_storage
-  );
 }
 
 async function loadConsentDraftContext(orgId) {
@@ -1142,18 +1115,33 @@ router.post("/launch-tool", requireStarterTier, async (req, res) => {
       });
     }
 
-    if (!governanceChecksComplete(cfg)) {
+    const governanceNormalized = normalizeGovernanceChecks(
+      cfg.governance_checks || cfg.governance
+    );
+    const incompleteGovernance = incompleteGovernanceItems(
+      governanceNormalized
+    );
+    if (
+      !governanceChecksComplete(governanceNormalized) ||
+      incompleteGovernance.length > 0
+    ) {
       return res.status(400).json({
         error:
-          "All three governance confirmations must be saved on this tool before launch.",
+          "Governance questions are required before launch. Each item now needs a short answer, not only a checkbox. Tools saved before this change must answer the new questions.",
+        errors: incompleteGovernance.map((item) => ({
+          item,
+          error:
+            "Confirm this item and add a short answer. Whitespace alone is not enough.",
+        })),
       });
     }
 
+    const launchNormalized = normalizeLaunchChecklist(cfg.launch_checklist);
     const incompleteChecklist = incompleteLaunchChecklistItems(
-      cfg.launch_checklist
+      launchNormalized
     );
     if (
-      !launchChecklistComplete(cfg.launch_checklist) ||
+      !launchChecklistComplete(launchNormalized) ||
       incompleteChecklist.length > 0
     ) {
       return res.status(400).json({
@@ -1451,6 +1439,101 @@ router.post("/gap-review", requireStarterTier, async (req, res) => {
     return res.status(500).json({ error: err.message || "Server error." });
   }
 });
+
+// Governance documentation (.docx). Starter+. For funders, boards, community.
+router.get(
+  "/tools/:toolId/download-governance",
+  requireStarterTier,
+  async (req, res) => {
+    try {
+      const user = await getAuthenticatedUser(req, res);
+      if (!user) return;
+
+      const { orgId, error: orgError } = await getOrgIdForUser(user.id);
+      if (orgError) {
+        return res.status(400).json({ error: orgError });
+      }
+
+      const toolId =
+        typeof req.params.toolId === "string" ? req.params.toolId.trim() : "";
+      if (!toolId) {
+        return res.status(400).json({ error: "tool_id is required." });
+      }
+
+      const { data: tool, error: findErr } = await supabase
+        .from("collection_tools")
+        .select("*")
+        .eq("id", toolId)
+        .eq("org_id", orgId)
+        .maybeSingle();
+
+      if (findErr || !tool) {
+        return res.status(400).json({ error: "Collection tool not found." });
+      }
+
+      const { data: org } = await supabase
+        .from("organizations")
+        .select("name")
+        .eq("id", orgId)
+        .maybeSingle();
+
+      const { data: engagementRows } = await supabase
+        .from("community_engagements")
+        .select("id, title, priorities_named, created_at")
+        .eq("org_id", orgId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      const cfg =
+        tool.configuration && typeof tool.configuration === "object"
+          ? tool.configuration
+          : {};
+      const questions = normalizeQuestions(
+        Array.isArray(cfg.questions) ? cfg.questions : []
+      );
+
+      const token =
+        typeof tool.public_token === "string" && tool.public_token.trim()
+          ? tool.public_token.trim()
+          : "";
+      const origin =
+        typeof process.env.PUBLIC_APP_ORIGIN === "string"
+          ? process.env.PUBLIC_APP_ORIGIN.trim().replace(/\/$/, "")
+          : "";
+      let removalUrl = "";
+      if (token && origin) {
+        removalUrl = `${origin}/f/${encodeURIComponent(token)}/remove`;
+      } else if (token) {
+        removalUrl = `/f/${encodeURIComponent(token)}/remove`;
+      }
+
+      const result = await generateGovernanceDocumentDocx({
+        orgName: org?.name || "",
+        toolName: tool.tool_name || "Collection tool",
+        generatedAt: new Date().toISOString(),
+        questions,
+        consentLanguage: parseStoredConsentLanguage(tool.consent_language),
+        governanceChecks: cfg.governance_checks || cfg.governance,
+        launchChecklist: cfg.launch_checklist,
+        removalUrl,
+        communityEngagement: engagementRows?.[0] || null,
+      });
+
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${result.filename}"`
+      );
+      return res.status(200).send(result.buffer);
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: err.message || "Server error." });
+    }
+  }
+);
 
 // Downloadable paper instrument (.docx). Starter+. One language per request.
 router.get(

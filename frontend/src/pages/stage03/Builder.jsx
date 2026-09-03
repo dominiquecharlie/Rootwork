@@ -426,11 +426,54 @@ const LAUNCH_CHECKLIST_ITEMS = [
   },
 ];
 
+const GOVERNANCE_CHECK_ITEMS = [
+  {
+    key: "consent_reviewed",
+    confirmLabel: "Consent language reviewed",
+    detailLabel: "Who reviewed the consent language, and what did you change?",
+    detailPlaceholder: "Name the reviewer and what changed.",
+  },
+  {
+    key: "shareback_plan",
+    confirmLabel: "Share-back plan in place",
+    detailLabel:
+      "How and when will you share findings back with the community?",
+    detailPlaceholder: "Describe how and when findings will be shared back.",
+  },
+  {
+    key: "data_storage",
+    confirmLabel: "Data storage and access decided",
+    detailLabel: "Where will this data live, and who has access to it?",
+    detailPlaceholder: "Name where data lives and who can access it.",
+  },
+];
+
 function emptyLaunchChecklist() {
   return {
     pilot_confirmed: { confirmed: false, detail: "" },
     staff_trained: { confirmed: false, detail: "" },
     community_informed: { confirmed: false, detail: "" },
+  };
+}
+
+function emptyGovernanceChecks() {
+  return {
+    consent_reviewed: { confirmed: false, detail: "" },
+    shareback_plan: { confirmed: false, detail: "" },
+    data_storage: { confirmed: false, detail: "" },
+  };
+}
+
+function readChecklistItem(raw) {
+  if (typeof raw === "boolean") {
+    return { confirmed: raw, detail: "" };
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { confirmed: false, detail: "" };
+  }
+  return {
+    confirmed: Boolean(raw.confirmed),
+    detail: typeof raw.detail === "string" ? raw.detail : "",
   };
 }
 
@@ -445,14 +488,31 @@ function readLaunchChecklistFromConfig(cfg) {
       : {};
   const next = emptyLaunchChecklist();
   for (const key of Object.keys(next)) {
-    const item =
-      raw[key] && typeof raw[key] === "object" && !Array.isArray(raw[key])
-        ? raw[key]
-        : {};
-    next[key] = {
-      confirmed: Boolean(item.confirmed),
-      detail: typeof item.detail === "string" ? item.detail : "",
-    };
+    next[key] = readChecklistItem(raw[key]);
+  }
+  return next;
+}
+
+function readGovernanceChecksFromConfig(cfg) {
+  let raw = {};
+  if (cfg && typeof cfg === "object") {
+    if (
+      cfg.governance_checks &&
+      typeof cfg.governance_checks === "object" &&
+      !Array.isArray(cfg.governance_checks)
+    ) {
+      raw = cfg.governance_checks;
+    } else if (
+      cfg.governance &&
+      typeof cfg.governance === "object" &&
+      !Array.isArray(cfg.governance)
+    ) {
+      raw = cfg.governance;
+    }
+  }
+  const next = emptyGovernanceChecks();
+  for (const key of Object.keys(next)) {
+    next[key] = readChecklistItem(raw[key]);
   }
   return next;
 }
@@ -466,6 +526,13 @@ function isLaunchChecklistComplete(checklist) {
   if (!checklist || typeof checklist !== "object") return false;
   return LAUNCH_CHECKLIST_ITEMS.every((item) =>
     isLaunchChecklistItemComplete(checklist[item.key])
+  );
+}
+
+function isGovernanceChecksComplete(checks) {
+  if (!checks || typeof checks !== "object") return false;
+  return GOVERNANCE_CHECK_ITEMS.every((item) =>
+    isLaunchChecklistItemComplete(checks[item.key])
   );
 }
 
@@ -609,9 +676,10 @@ function Builder() {
     initialFromUrl.survey_purpose || ""
   );
 
-  const [govConsent, setGovConsent] = useState(false);
-  const [govShare, setGovShare] = useState(false);
-  const [govData, setGovData] = useState(false);
+  const [governanceChecks, setGovernanceChecks] = useState(() =>
+    emptyGovernanceChecks()
+  );
+  const [governanceErrors, setGovernanceErrors] = useState({});
   const [launchChecklist, setLaunchChecklist] = useState(() =>
     emptyLaunchChecklist()
   );
@@ -638,6 +706,8 @@ function Builder() {
       setCollectionToolId(null);
       setLaunchChecklist(emptyLaunchChecklist());
       setChecklistErrors({});
+      setGovernanceChecks(emptyGovernanceChecks());
+      setGovernanceErrors({});
     }
   }, [
     searchParams.toString(),
@@ -720,7 +790,6 @@ function Builder() {
             ? tool.configuration
             : {};
         const mapped = normalizeClientQuestions(cfg.questions);
-        const gc = cfg.governance_checks || {};
         const wt = (tool.tool_type || "survey").toLowerCase().trim();
         const tool_type = [
           "survey",
@@ -770,9 +839,8 @@ function Builder() {
           }
           return next;
         });
-        setGovConsent(Boolean(gc.consent_reviewed));
-        setGovShare(Boolean(gc.shareback_plan));
-        setGovData(Boolean(gc.data_storage));
+        setGovernanceChecks(readGovernanceChecksFromConfig(cfg));
+        setGovernanceErrors({});
         setLaunchChecklist(readLaunchChecklistFromConfig(cfg));
         setChecklistErrors({});
       } catch {
@@ -1230,9 +1298,27 @@ function Builder() {
         return map;
       })(),
       governance_checks: {
-        consent_reviewed: govConsent,
-        shareback_plan: govShare,
-        data_storage: govData,
+        consent_reviewed: {
+          confirmed: Boolean(governanceChecks.consent_reviewed?.confirmed),
+          detail:
+            typeof governanceChecks.consent_reviewed?.detail === "string"
+              ? governanceChecks.consent_reviewed.detail
+              : "",
+        },
+        shareback_plan: {
+          confirmed: Boolean(governanceChecks.shareback_plan?.confirmed),
+          detail:
+            typeof governanceChecks.shareback_plan?.detail === "string"
+              ? governanceChecks.shareback_plan.detail
+              : "",
+        },
+        data_storage: {
+          confirmed: Boolean(governanceChecks.data_storage?.confirmed),
+          detail:
+            typeof governanceChecks.data_storage?.detail === "string"
+              ? governanceChecks.data_storage.detail
+              : "",
+        },
       },
       launch_checklist: {
         pilot_confirmed: {
@@ -1266,9 +1352,7 @@ function Builder() {
     questions,
     consentByLang,
     toolLanguages,
-    govConsent,
-    govShare,
-    govData,
+    governanceChecks,
     launchChecklist,
   ]);
 
@@ -1325,6 +1409,18 @@ function Builder() {
       );
     } catch (e) {
       setSaveError(e.message || "Could not download responses.");
+    }
+  }
+
+  async function handleDownloadGovernance() {
+    if (!collectionToolId) return;
+    setSaveError("");
+    try {
+      await downloadAuthorizedFile(
+        `/api/stage03/tools/${encodeURIComponent(collectionToolId)}/download-governance`
+      );
+    } catch (e) {
+      setSaveError(e.message || "Could not download governance documentation.");
     }
   }
 
@@ -1507,7 +1603,7 @@ function Builder() {
     }
   }
 
-  const governanceReady = govConsent && govShare && govData;
+  const governanceReady = isGovernanceChecksComplete(governanceChecks);
   const checklistReady = isLaunchChecklistComplete(launchChecklist);
   const launchDisabled =
     !governanceReady ||
@@ -1520,12 +1616,23 @@ function Builder() {
     setLaunchError("");
     setTierNotice("");
     setChecklistErrors({});
+    setGovernanceErrors({});
     if (!collectionToolId) {
       setLaunchError("Save a draft first so this tool has an id.");
       return;
     }
     if (!governanceReady) {
-      setLaunchError("Confirm all governance items before launch.");
+      const map = {};
+      for (const item of GOVERNANCE_CHECK_ITEMS) {
+        if (!isLaunchChecklistItemComplete(governanceChecks[item.key])) {
+          map[item.key] =
+            "Confirm this item and add a short answer. Whitespace alone is not enough.";
+        }
+      }
+      setGovernanceErrors(map);
+      setLaunchError(
+        "Answer the governance questions before launch. Each item needs a short answer, not only a checkbox."
+      );
       return;
     }
     if (!checklistReady) {
@@ -1591,18 +1698,21 @@ function Builder() {
       if (!response.ok) {
         const errs = Array.isArray(body?.errors) ? body.errors : [];
         if (errs.length > 0) {
-          const map = {};
+          const govMap = {};
+          const launchMap = {};
+          const govKeys = new Set(GOVERNANCE_CHECK_ITEMS.map((i) => i.key));
           for (const e of errs) {
-            if (typeof e?.item === "string" && e.item.trim()) {
-              map[e.item.trim()] =
-                typeof e.error === "string" && e.error.trim()
-                  ? e.error.trim()
-                  : "Incomplete.";
-            }
+            if (typeof e?.item !== "string" || !e.item.trim()) continue;
+            const key = e.item.trim();
+            const msg =
+              typeof e.error === "string" && e.error.trim()
+                ? e.error.trim()
+                : "Incomplete.";
+            if (govKeys.has(key)) govMap[key] = msg;
+            else launchMap[key] = msg;
           }
-          if (Object.keys(map).length > 0) {
-            setChecklistErrors(map);
-          }
+          if (Object.keys(govMap).length > 0) setGovernanceErrors(govMap);
+          if (Object.keys(launchMap).length > 0) setChecklistErrors(launchMap);
         }
         const parsed = parseStage03GateResponse(response, body);
         if (parsed.kind === "tier") {
@@ -2972,7 +3082,7 @@ function Builder() {
         >
           <h2
             style={{
-              margin: "0 0 14px",
+              margin: "0 0 8px",
               color: green,
               fontFamily: georgia,
               fontWeight: 700,
@@ -2980,70 +3090,135 @@ function Builder() {
               textAlign: "center",
             }}
           >
-            Before you launch
+            Governance decisions
           </h2>
-          <label
+          <p
             style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: "10px",
-              marginBottom: "12px",
+              margin: "0 0 18px",
+              color: muted,
               fontFamily: dmSans,
-              fontSize: "0.92rem",
-              color: bodyDark,
-              lineHeight: 1.45,
+              fontSize: "0.88rem",
+              lineHeight: 1.5,
+              textAlign: "center",
             }}
           >
-            <input
-              type="checkbox"
-              checked={govConsent}
-              onChange={(e) => setGovConsent(e.target.checked)}
-              style={{ marginTop: "4px" }}
-            />
-            Consent language has been reviewed and adapted by staff
-          </label>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: "10px",
-              marginBottom: "12px",
-              fontFamily: dmSans,
-              fontSize: "0.92rem",
-              color: bodyDark,
-              lineHeight: 1.45,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={govShare}
-              onChange={(e) => setGovShare(e.target.checked)}
-              style={{ marginTop: "4px" }}
-            />
-            We have a plan for sharing findings back with community members
-          </label>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              gap: "10px",
-              marginBottom: "4px",
-              fontFamily: dmSans,
-              fontSize: "0.92rem",
-              color: bodyDark,
-              lineHeight: 1.45,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={govData}
-              onChange={(e) => setGovData(e.target.checked)}
-              style={{ marginTop: "4px" }}
-            />
-            We know which staff members can access responses in Rootwork, and
-            have a plan for how data will be handled if it is exported or shared
-            outside the platform
-          </label>
+            Each item needs a confirmation and a short answer. A checked box
+            without detail does not count.
+          </p>
+          {GOVERNANCE_CHECK_ITEMS.map((item) => {
+            const entry = governanceChecks[item.key] || {
+              confirmed: false,
+              detail: "",
+            };
+            const err = governanceErrors[item.key];
+            return (
+              <div
+                key={item.key}
+                style={{
+                  marginBottom: "18px",
+                  paddingBottom: "16px",
+                  borderBottom: "1px solid #E5E7EB",
+                }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "10px",
+                    marginBottom: "10px",
+                    fontFamily: dmSans,
+                    fontSize: "0.92rem",
+                    color: bodyDark,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={Boolean(entry.confirmed)}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setGovernanceChecks((prev) => ({
+                        ...prev,
+                        [item.key]: {
+                          confirmed: checked,
+                          detail:
+                            typeof prev[item.key]?.detail === "string"
+                              ? prev[item.key].detail
+                              : "",
+                        },
+                      }));
+                      setGovernanceErrors((prev) => {
+                        const next = { ...prev };
+                        delete next[item.key];
+                        return next;
+                      });
+                    }}
+                    style={{ marginTop: "4px" }}
+                  />
+                  {item.confirmLabel}
+                </label>
+                <label
+                  htmlFor={`governance-${item.key}`}
+                  style={{
+                    display: "block",
+                    marginBottom: "6px",
+                    fontFamily: dmSans,
+                    fontSize: "0.88rem",
+                    fontWeight: 600,
+                    color: bodyDark,
+                  }}
+                >
+                  {item.detailLabel}
+                </label>
+                <textarea
+                  id={`governance-${item.key}`}
+                  value={typeof entry.detail === "string" ? entry.detail : ""}
+                  onChange={(e) => {
+                    const detail = e.target.value;
+                    setGovernanceChecks((prev) => ({
+                      ...prev,
+                      [item.key]: {
+                        confirmed: Boolean(prev[item.key]?.confirmed),
+                        detail,
+                      },
+                    }));
+                    setGovernanceErrors((prev) => {
+                      const next = { ...prev };
+                      delete next[item.key];
+                      return next;
+                    });
+                  }}
+                  rows={3}
+                  placeholder={item.detailPlaceholder}
+                  style={{
+                    width: "100%",
+                    boxSizing: "border-box",
+                    padding: "10px 12px",
+                    borderRadius: "8px",
+                    border: err ? "1px solid #B91C1C" : `1px solid ${mintBorder}`,
+                    fontFamily: dmSans,
+                    fontSize: "0.92rem",
+                    color: bodyDark,
+                    backgroundColor: "#FAF9F7",
+                    resize: "vertical",
+                  }}
+                />
+                {err ? (
+                  <p
+                    role="alert"
+                    style={{
+                      margin: "6px 0 0",
+                      color: "#B91C1C",
+                      fontFamily: dmSans,
+                      fontSize: "0.85rem",
+                    }}
+                  >
+                    {err}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
         </section>
 
         <section
@@ -3310,6 +3485,24 @@ function Builder() {
               }}
             >
               Download instrument (ES)
+            </button>
+          ) : null}
+          {collectionToolId ? (
+            <button
+              type="button"
+              onClick={handleDownloadGovernance}
+              style={{
+                cursor: "pointer",
+                padding: "12px 22px",
+                borderRadius: "8px",
+                border: `2px solid ${green}`,
+                backgroundColor: "#FFFFFF",
+                color: green,
+                fontFamily: dmSans,
+                fontWeight: 600,
+              }}
+            >
+              Download governance documentation
             </button>
           ) : null}
           {collectionToolId ? (
